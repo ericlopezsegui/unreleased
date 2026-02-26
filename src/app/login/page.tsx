@@ -79,7 +79,17 @@ export default function LoginPage() {
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) { setError(error.message); setLoading(false) }
-      else router.push('/home')
+      else {
+        const pendingInvite = sessionStorage.getItem('pending_invite')
+        if (pendingInvite) {
+          sessionStorage.removeItem('pending_invite')
+          // Aceptar invite tras login
+          await supabase.rpc('accept_artist_invite', { p_token: pendingInvite, p_display_name: '' })
+          router.push('/home')
+        } else {
+          router.push('/home')
+        }
+      }
     } else {
       if (password !== confirmPassword) {
         setError('Las contraseñas no coinciden')

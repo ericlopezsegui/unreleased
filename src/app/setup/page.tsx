@@ -81,11 +81,17 @@ export default function SetupPage() {
 
       if (avatarFile) {
         const ext = avatarFile.name.split('.').pop()
-        const path = `user/${user.id}/avatar.${ext}`
+        const timestamp = Date.now()
+        const path = `user/${user.id}/avatar-${timestamp}.${ext}`
         const { error: uploadError } = await supabase.storage
           .from('avatars')
-          .upload(path, avatarFile, { upsert: true })
-        if (uploadError) throw uploadError
+          .upload(path, avatarFile)
+        if (uploadError) {
+          console.error('Error subiendo avatar de perfil:', uploadError)
+          setError(`Error al subir la imagen: ${uploadError.message}`)
+          setLoading(false)
+          return
+        }
         avatarPath = path
       }
 
@@ -96,11 +102,17 @@ export default function SetupPage() {
           display_name: displayName.trim(),
           avatar_path: avatarPath,
         })
-      if (profileError) throw profileError
+      if (profileError) {
+        console.error('Error guardando perfil:', profileError)
+        setError(`Error al guardar el perfil: ${profileError.message}`)
+        setLoading(false)
+        return
+      }
 
       goTo('artist')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error inesperado')
+      console.error('Error en handleProfileSubmit:', err)
+      setError(err instanceof Error ? err.message : 'Ocurrió un error al guardar tu perfil')
     } finally {
       setLoading(false)
     }
@@ -118,8 +130,7 @@ export default function SetupPage() {
 
       const handle = artistHandle.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') || null
 
-      // 1. Insertar artista (el trigger on_artist_created_add_owner
-      //    añade automáticamente el owner en artist_members)
+      // 1. Insertar artista SIN avatar primero
       const { data: artistData, error: artistError } = await supabase
         .from('artists')
         .insert({
@@ -131,34 +142,69 @@ export default function SetupPage() {
         .select('id')
         .single()
 
-      if (artistError) throw artistError
-
-      // 2. Subir avatar del artista si hay uno
-      if (artistAvatarFile && artistData) {
-        const ext = artistAvatarFile.name.split('.').pop()
-        const path = `artist/${artistData.id}/avatar.${ext}`
-        const { error: uploadError } = await supabase.storage
-          .from('avatars')
-          .upload(path, artistAvatarFile, { upsert: true })
-
-        if (!uploadError) {
-          await supabase
-            .from('artists')
-            .update({ avatar_path: path })
-            .eq('id', artistData.id)
-        }
+      if (artistError) {
+        console.error('❌ Error creando artista:', artistError)
+        setError(`Error al crear el artista: ${artistError.message}`)
+        setLoading(false)
+        return
       }
 
-      // 3. Marcar onboarding completado
+      console.log('✅ Artista creado:', artistData)
+
+      // 2. Esperar 500ms para que el trigger termine
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // 3. Subir el avatar (si existe)
+      if (artistAvatarFile && artistData) {
+        const ext = artistAvatarFile.name.split('.').pop()
+        const timestamp = Date.now()
+        const path = `artist/${artistData.id}/avatar-${timestamp}.${ext}`
+        
+        console.log('📤 Subiendo a:', path)
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('avatars')
+          .upload(path, artistAvatarFile)
+
+        if (uploadError) {
+          console.error('❌ Error upload:', uploadError)
+          setError(`Artista creado pero fallo al subir imagen: ${uploadError.message}`)
+          setLoading(false)
+          return
+        }
+
+        console.log('✅ Upload exitoso. Path real:', uploadData.path)
+        console.log('🔍 Comparación - esperado:', path, '| real:', uploadData.path)
+
+        // 4. Guardar el path EXACTO que devolvió Supabase
+        const { error: updateError } = await supabase
+          .from('artists')
+          .update({ avatar_path: uploadData.path }) // ← Usar uploadData.path
+          .eq('id', artistData.id)
+
+        if (updateError) {
+          console.error('❌ Error actualizando DB:', updateError)
+          setError(`Error al guardar el avatar: ${updateError.message}`)
+          setLoading(false)
+          return
+        }
+
+        console.log('✅ Avatar guardado en DB:', uploadData.path)
+      }
+
+      // 5. Marcar onboarding completado
       await supabase
         .from('profiles')
         .update({ onboarding_completed: true })
         .eq('user_id', user.id)
 
       goTo('done')
-      setTimeout(() => router.push('/home'), 1800)
+      
+      // CAMBIO: Esperar 2 segundos para que el archivo se propague en storage
+      setTimeout(() => router.push('/home'), 2500) // ← Aumentar de 1800 a 2500ms
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error inesperado')
+      console.error('❌ Error general:', err)
+      setError(err instanceof Error ? err.message : 'Ocurrió un error al crear el artista')
     } finally {
       setLoading(false)
     }

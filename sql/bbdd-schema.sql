@@ -84,6 +84,7 @@ as $$
 $$;
 
 -- Al crear artista -> insertar automáticamente owner en artist_members
+-- CAMBIO: Usar BEFORE INSERT y SECURITY DEFINER para evitar conflicto con RLS
 create or replace function public.handle_new_artist_member()
 returns trigger
 language plpgsql
@@ -91,6 +92,7 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Insertar en artist_members inmediatamente
   insert into public.artist_members (artist_id, user_id, role)
   values (new.id, new.owner_user_id, 'owner')
   on conflict (artist_id, user_id) do nothing;
@@ -238,6 +240,60 @@ create table if not exists public.download_events (
 );
 
 -- =========================================================
+-- 11) ARTIST_INVITES (invitaciones por enlace)
+-- =========================================================
+create table if not exists public.artist_invites (
+  id uuid primary key default gen_random_uuid(),
+  artist_id uuid not null references public.artists(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'viewer' check (role in ('editor','viewer')),
+  token text not null unique default translate(encode(gen_random_bytes(24), 'base64'), '+/=', '-_'),
+  used_by uuid references auth.users(id) on delete set null,
+  used_at timestamptz,
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_artist_invites_token on public.artist_invites(token);
+create index if not exists idx_artist_invites_artist on public.artist_invites(artist_id);
+
+alter table public.artist_invites enable row level security;
+
+-- Owner puede ver y gestionar sus invites
+drop policy if exists invites_select_owner on public.artist_invites;
+create policy invites_select_owner
+on public.artist_invites for select
+using (created_by = auth.uid());
+
+drop policy if exists invites_insert_owner on public.artist_invites;
+create policy invites_insert_owner
+on public.artist_invites for insert
+with check (
+  created_by = auth.uid()
+);
+
+drop policy if exists invites_delete_owner on public.artist_invites;
+create policy invites_delete_owner
+on public.artist_invites for delete
+using (created_by = auth.uid());
+
+-- Cualquier usuario autenticado puede leer un invite por token (para aceptarlo)
+-- SIN condiciones que llamen a otras tablas con RLS
+drop policy if exists invites_select_by_token on public.artist_invites;
+create policy invites_select_by_token
+on public.artist_invites for select
+using (
+  auth.uid() is not null
+);
+
+-- El invitado puede marcar el invite como usado
+drop policy if exists invites_update_accept on public.artist_invites;
+create policy invites_update_accept
+on public.artist_invites for update
+using (auth.uid() is not null)
+with check (used_by = auth.uid());
+
+-- =========================================================
 -- INDEXES (rendimiento)
 -- =========================================================
 create index if not exists idx_tracks_artist on public.tracks(artist_id);
@@ -323,11 +379,19 @@ on public.profiles for update
 using (user_id = auth.uid())
 with check (user_id = auth.uid());
 
--- ARTISTS: select si eres miembro, insert si owner_user_id=auth.uid, update/delete solo owner
+-- ARTISTS: select si eres miembro O si eres owner directo
 drop policy if exists artists_select_member on public.artists;
 create policy artists_select_member
 on public.artists for select
-using (public.is_artist_member(id));
+using (
+  owner_user_id = auth.uid()
+  or
+  exists(
+    select 1 from public.artist_members m
+    where m.artist_id = id
+      and m.user_id = auth.uid()
+  )
+);
 
 drop policy if exists artists_insert_self_owner on public.artists;
 create policy artists_insert_self_owner
@@ -350,35 +414,47 @@ using (owner_user_id = auth.uid());
 drop policy if exists artist_members_select_member on public.artist_members;
 create policy artist_members_select_member
 on public.artist_members for select
-using (public.is_artist_member(artist_id));
+using (user_id = auth.uid());
 
 -- insert/update/delete solo owner del artist
 drop policy if exists artist_members_insert_owner on public.artist_members;
 create policy artist_members_insert_owner
 on public.artist_members for insert
 with check (
-  exists(select 1 from public.artists a
-         where a.id = artist_id and a.owner_user_id = auth.uid())
+  exists(
+    select 1 from public.artists a
+    where a.id = artist_id
+      and a.owner_user_id = auth.uid()
+  )
 );
 
 drop policy if exists artist_members_update_owner on public.artist_members;
 create policy artist_members_update_owner
 on public.artist_members for update
 using (
-  exists(select 1 from public.artists a
-         where a.id = artist_id and a.owner_user_id = auth.uid())
+  exists(
+    select 1 from public.artists a
+    where a.id = artist_id
+      and a.owner_user_id = auth.uid()
+  )
 )
 with check (
-  exists(select 1 from public.artists a
-         where a.id = artist_id and a.owner_user_id = auth.uid())
+  exists(
+    select 1 from public.artists a
+    where a.id = artist_id
+      and a.owner_user_id = auth.uid()
+  )
 );
 
 drop policy if exists artist_members_delete_owner on public.artist_members;
 create policy artist_members_delete_owner
 on public.artist_members for delete
 using (
-  exists(select 1 from public.artists a
-         where a.id = artist_id and a.owner_user_id = auth.uid())
+  exists(
+    select 1 from public.artists a
+    where a.id = artist_id
+      and a.owner_user_id = auth.uid()
+  )
 );
 
 -- ALBUMS: CRUD si miembro
@@ -608,3 +684,115 @@ using (
       and s.created_by = auth.uid()
   )
 );
+
+-- Función SECURITY DEFINER para listar miembros sin recursión
+create or replace function public.get_artist_members(aid uuid)
+returns table(user_id uuid, role text, created_at timestamptz)
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select m.user_id, m.role, m.created_at
+  from public.artist_members m
+  where m.artist_id = aid
+    and (
+      m.user_id = auth.uid()
+      or exists(
+        select 1 from public.artists a
+        where a.id = aid and a.owner_user_id = auth.uid()
+      )
+    );
+$$;
+
+-- Función para crear invite sin problemas de RLS
+create or replace function public.create_artist_invite(
+  p_artist_id uuid,
+  p_role text
+)
+returns table(id uuid, token text, role text, expires_at timestamptz, used_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  -- Verificar que el usuario es owner
+  if not exists(
+    select 1 from public.artists a
+    where a.id = p_artist_id and a.owner_user_id = v_user_id
+  ) then
+    raise exception 'Not authorized';
+  end if;
+
+  return query
+  insert into public.artist_invites (artist_id, created_by, role)
+  values (p_artist_id, v_user_id, p_role)
+  returning
+    public.artist_invites.id,
+    public.artist_invites.token,
+    public.artist_invites.role,
+    public.artist_invites.expires_at,
+    public.artist_invites.used_at;
+end;
+$$;
+
+-- Función pública para leer info de un invite por token (no requiere auth)
+create or replace function public.get_invite_info(p_token text)
+returns table(artist_name text, role text, valid boolean, reason text, artist_avatar_path text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_invite public.artist_invites;
+  v_artist public.artists;
+begin
+  select * into v_invite
+  from public.artist_invites
+  where token = p_token;
+
+  if not found then
+    return query select ''::text, ''::text, false, 'invalid'::text, ''::text;
+    return;
+  end if;
+
+  if v_invite.used_at is not null then
+    return query select ''::text, ''::text, false, 'used'::text, ''::text;
+    return;
+  end if;
+
+  if v_invite.expires_at < now() then
+    return query select ''::text, ''::text, false, 'expired'::text, ''::text;
+    return;
+  end if;
+
+  select * into v_artist from public.artists where id = v_invite.artist_id;
+
+  return query select v_artist.name, v_invite.role, true, 'ok'::text, coalesce(v_artist.avatar_path, '')::text;
+end;
+$$;
+
+-- Función para listar invites de un artista (solo owner)
+create or replace function public.get_artist_invites(p_artist_id uuid)
+returns table(id uuid, token text, role text, expires_at timestamptz, used_at timestamptz)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not exists(
+    select 1 from public.artists a
+    where a.id = p_artist_id and a.owner_user_id = auth.uid()
+  ) then
+    return;
+  end if;
+
+  return query
+  select i.id, i.token, i.role, i.expires_at, i.used_at
+  from public.artist_invites i
+  where i.artist_id = p_artist_id
+  order by i.created_at desc;
+end;
+$$;

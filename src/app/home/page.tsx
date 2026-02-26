@@ -1,133 +1,259 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WaveBackground } from '@/components/ui/wave-background'
 import { QRCodeSVG } from 'qrcode.react'
 
-interface Profile  { display_name: string | null; avatar_path: string | null }
-interface Artist   { id: string; name: string; handle: string | null; avatar_path: string | null; bio: string | null }
-interface RecentItem { id: string; title: string; type: 'album' | 'track'; artist_name: string; updated_at: string; cover_path: string | null }
+interface Profile { display_name: string | null; avatar_path: string | null }
+interface Artist { id: string; name: string; handle: string | null; avatar_path: string | null; bio: string | null }
+interface RecentItem { id: string; title: string; type: 'album' | 'track'; updated_at: string; cover_path: string | null }
+interface Member { user_id: string; role: string; profiles: { display_name: string | null } | null }
+interface Invite { id: string; token: string; role: string; expires_at: string; used_at: string | null }
 
-// ── Icons ─────────────────────────────────────────────────
-const P: Record<string, string[]> = {
-  music:    ['M9 18V5l12-2v13','M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
-  albums:   ['M3 3h18v18H3z','M3 9h18','M9 9v12'],
-  tracks:   ['M9 18V5l12-2v13','M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M18 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'],
-  upload:   ['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4','M17 8l-5-5-5 5','M12 3v12'],
-  plus:     ['M12 5v14','M5 12h14'],
-  users:    ['M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2','M23 21v-2a4 4 0 0 0-3-3.87','M16 3.13a4 4 0 0 1 0 7.75','M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
-  link:     ['M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71','M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'],
-  settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z','M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'],
-  close:    ['M18 6L6 18','M6 6l12 12'],
-  chevron:  ['M9 18l6-6-6-6'],
-  logout:   ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4','M16 17l5-5-5-5','M21 12H9'],
-  qr:       ['M3 3h6v6H3z','M15 3h6v6h-6z','M3 15h6v6H3z','M15 15h2v2h-2z','M19 15v2','M15 19h2','M19 19v2'],
-  edit:     ['M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7','M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z'],
+const ico: Record<string, [string, ...string[]]> = {
+  music:  ['M9 18V5l12-2v13','M6 21a3 3 0 100-6 3 3 3 0 000 6z','M18 19a3 3 0 100-6 3 3 3 0 000 6z'],
+  disc:   ['M12 2a10 10 0 100 20 10 10 0 000-20z','M12 8a4 4 0 100 8 4 4 0 000-8z','M12 11a1 1 0 100 2 1 1 0 000-2z'],
+  upload: ['M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4','M17 8l-5-5-5 5','M12 3v12'],
+  link:   ['M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71','M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71'],
+  users:  ['M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2','M9 7a4 4 0 100-8 4 4 0 000 8z','M22 21v-2a4 4 0 00-3-3.87','M16 3.13a4 4 0 010 7.75'],
+  logout: ['M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4','M16 17l5-5-5-5','M21 12H9'],
+  qr:     ['M3 3h7v7H3z','M14 3h7v7h-7z','M3 14h7v7H3z','M17 14h1v1h-1z','M21 14v3h-2','M14 21h3v-2','M21 21h-1v-1'],
+  close:  ['M18 6L6 18','M6 6l12 12'],
+  arrow:  ['M5 12h14','M12 5l7 7-7 7'],
+  set:    ['M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z'],
 }
 
-function Icon({ n, size = 18, color = 'currentColor', sw = 1.8 }: { n: string; size?: number; color?: string; sw?: number }) {
+function Ic({ n, s = 16, c = 'currentColor', w = 1.4 }: { n: string; s?: number; c?: string; w?: number }) {
+  const p = ico[n]
+  if (!p) return null
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
-      {(P[n] ?? []).map((d, i) => <path key={i} d={d} />)}
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={w} strokeLinecap="round" strokeLinejoin="round">
+      {p.map((d, i) => <path key={i} d={d} />)}
     </svg>
   )
 }
 
 function TimeAgo({ date }: { date: string }) {
   const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000)
-  if (s < 60) return <>ahora</>
-  if (s < 3600) return <>{Math.floor(s / 60)}m</>
-  if (s < 86400) return <>{Math.floor(s / 3600)}h</>
-  return <>{Math.floor(s / 86400)}d</>
+  if (s < 60) return <span>ahora</span>
+  if (s < 3600) return <span>{Math.floor(s / 60)}m</span>
+  if (s < 86400) return <span>{Math.floor(s / 3600)}h</span>
+  if (s < 604800) return <span>{Math.floor(s / 86400)}d</span>
+  return <span>{new Date(date).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
 }
 
 function QRModal({ url, onClose }: { url: string; onClose: () => void }) {
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fafafa', padding: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, width: '100%', maxWidth: 280 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#0f0f0f' }}>Abrir en móvil</p>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', display: 'flex' }}><Icon n="close" size={15} /></button>
+    <div onClick={onClose} className="qr-overlay">
+      <div onClick={e => e.stopPropagation()} className="qr-box">
+        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <span className="label-xs">Abrir en móvil</span>
+          <button onClick={onClose} className="ghost-btn"><Ic n="close" s={13} /></button>
         </div>
-        <QRCodeSVG value={url} size={160} fgColor="#0f0f0f" bgColor="#fafafa" level="M" />
-        <p style={{ fontSize: 11, color: '#bbb', textAlign: 'center', lineHeight: 1.6 }}>Escanea para abrir unreleased en tu dispositivo</p>
-        <p style={{ fontSize: 10, color: '#ddd', wordBreak: 'break-all', textAlign: 'center' }}>{url}</p>
+        <QRCodeSVG value={url} size={160} fgColor="#0f0f0f" bgColor="#fff" level="M" />
+        <p style={{ fontSize: 11, color: '#aaa', textAlign: 'center', margin: 0 }}>Escanea con tu cámara</p>
       </div>
     </div>
   )
 }
 
-// ── Action menu ───────────────────────────────────────────
-const ACTIONS = [
-  { key: 'upload',  label: 'Subir música',    icon: 'upload'   },
-  { key: 'album',   label: 'Crear álbum',      icon: 'albums'   },
-  { key: 'share',   label: 'Compartir enlace', icon: 'link'     },
-  { key: 'members', label: 'Gestionar equipo', icon: 'users'    },
-  { key: 'edit',    label: 'Editar artista',   icon: 'edit'     },
-  { key: 'settings',label: 'Ajustes',          icon: 'settings' },
-]
+function TeamModal({ artist, onClose }: { artist: Artist; onClose: () => void }) {
+  const supabase = createClient()
+  const [members, setMembers] = useState<Member[]>([])
+  const [invites, setInvites] = useState<Invite[]>([])
+  const [creating, setCreating] = useState<'editor' | 'viewer' | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [inviteError, setInviteError] = useState<string | null>(null)
 
-function ActionMenu({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+  useEffect(() => { load() }, [])
+
+  const load = async () => {
+    const [mRes, iRes] = await Promise.all([
+      supabase.from('artist_members').select('user_id, role').eq('artist_id', artist.id),
+      supabase.rpc('get_artist_invites', { p_artist_id: artist.id }),
+    ])
+
+    const memberData = (mRes.data ?? []) as { user_id: string; role: string }[]
+    const userIds = memberData.map(m => m.user_id)
+    const { data: profileData } = userIds.length > 0
+      ? await supabase.from('profiles').select('user_id, display_name').in('user_id', userIds)
+      : { data: [] }
+
+    const profileMap = Object.fromEntries((profileData ?? []).map(p => [p.user_id, p.display_name]))
+    const membersWithNames: Member[] = memberData.map(m => ({
+      ...m,
+      profiles: { display_name: profileMap[m.user_id] ?? null }
+    }))
+
+    setMembers(membersWithNames)
+    setInvites((iRes.data ?? []) as Invite[])
+  }
+
+  const createInvite = async (role: 'editor' | 'viewer') => {
+    setCreating(role)
+    setInviteError(null)
+
+    const { data, error } = await supabase.rpc('create_artist_invite', { p_artist_id: artist.id, p_role: role })
+
+    if (error) {
+      setInviteError(`Error: ${error.message}`)
+      setCreating(null)
+      return
+    }
+
+    if (data?.[0]) {
+      setInvites(prev => [data[0] as Invite, ...prev])
+    }
+
+    setCreating(null)
+  }
+
+  const deleteInvite = async (id: string) => {
+    await supabase.from('artist_invites').delete().eq('id', id)
+    setInvites(prev => prev.filter(i => i.id !== id))
+  }
+
+  const copyLink = (token: string) => {
+    const text = `${origin}/invite/${token}`
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopied(token)
+        setTimeout(() => setCopied(null), 2000)
+      }).catch(() => fallbackCopy(token, text))
+    } else {
+      fallbackCopy(token, text)
+    }
+  }
+
+  const fallbackCopy = (token: string, text: string) => {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.focus()
+    el.select()
+    try {
+      document.execCommand('copy')
+      setCopied(token)
+      setTimeout(() => setCopied(null), 2000)
+    } catch {}
+    document.body.removeChild(el)
+  }
+
+  const activeInvites = invites.filter(i => !i.used_at && new Date(i.expires_at) > new Date())
+
   return (
-    <>
-      {open && <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 50 }} />}
-      <div style={{
-        position: 'absolute', bottom: 56, right: 0,
-        display: 'flex', flexDirection: 'column', gap: 6,
-        pointerEvents: open ? 'all' : 'none',
-        zIndex: 60,
-      }}>
-        {ACTIONS.map((a, i) => (
-          <div key={a.key} style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '10px 16px',
-            background: 'rgba(250,250,250,0.97)',
-            backdropFilter: 'blur(12px)',
-            border: '1px solid #f0f0f0',
-            cursor: 'pointer', whiteSpace: 'nowrap',
-            opacity: open ? 1 : 0,
-            transform: open ? 'translateY(0) scale(1)' : 'translateY(12px) scale(0.96)',
-            transition: `opacity 0.22s ease ${i * 0.04}s, transform 0.22s ease ${i * 0.04}s`,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
-          }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#f8f8f8')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'rgba(250,250,250,0.97)')}
-            onClick={onClose}
-          >
-            <Icon n={a.icon} size={15} color="#888" />
-            <span style={{ fontSize: 13, fontWeight: 500, color: '#0f0f0f', fontFamily: 'Outfit, sans-serif' }}>{a.label}</span>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.2)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 560, background: '#fafafa', borderTop: '1px solid #eee', padding: '28px 24px 48px', maxHeight: '85dvh', overflowY: 'auto', fontFamily: 'Outfit, sans-serif' }}>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+          <div>
+            <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 4px' }}>Equipo</p>
+            <h2 style={{ fontSize: 18, fontWeight: 200, color: '#0f0f0f', margin: 0, letterSpacing: '-0.02em' }}>{artist.name}</h2>
           </div>
-        ))}
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', display: 'flex', padding: 4 }}>
+            <Ic n="close" s={16} />
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 28 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Miembros</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {members.map(m => (
+              <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.03)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Ic n="users" s={14} c="#ccc" />
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: '#0f0f0f' }}>{m.profiles?.display_name ?? 'Usuario'}</span>
+                </div>
+                <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: m.role === 'owner' ? '#0f0f0f' : '#bbb' }}>{m.role}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 24 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Invitaciones activas</p>
+          {activeInvites.length === 0 ? (
+            <p style={{ fontSize: 12, color: '#ddd', padding: '16px 0' }}>No hay invitaciones activas</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {activeInvites.map(inv => (
+                <div key={inv.id} style={{ padding: '14px 14px', background: '#fff', border: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: inv.role === 'editor' ? '#0f0f0f' : '#999', padding: '3px 7px', border: '1px solid', borderColor: inv.role === 'editor' ? '#0f0f0f' : '#eee' }}>
+                        {inv.role === 'editor' ? 'Editor' : 'Solo lectura'}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#ccc' }}>· expira {new Date(inv.expires_at).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
+                    </div>
+                    <button onClick={() => deleteInvite(inv.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 2, transition: 'color .15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.color = '#999')}
+                      onMouseLeave={e => (e.currentTarget.style.color = '#ddd')}>
+                      <Ic n="close" s={13} />
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#fafafa', border: '1px solid #f5f5f5' }}>
+                    <span style={{ flex: 1, fontSize: 11, color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.01em' }}>
+                      {origin}/invite/{inv.token}
+                    </span>
+                    <button onClick={() => copyLink(inv.token)}
+                      style={{ background: copied === inv.token ? '#0f0f0f' : 'none', border: '1px solid', borderColor: copied === inv.token ? '#0f0f0f' : '#eee', cursor: 'pointer', padding: '5px 10px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: copied === inv.token ? '#fff' : '#999', fontFamily: 'inherit', transition: 'all .15s', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {copied === inv.token ? '✓ Copiado' : 'Copiar'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 10px' }}>Crear enlace de invitación</p>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => createInvite('editor')} disabled={creating !== null}
+              style={{ flex: 1, padding: '11px 16px', background: '#0f0f0f', color: '#fff', border: 'none', cursor: creating !== null ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 500, fontFamily: 'inherit', opacity: creating !== null ? 0.5 : 1, transition: 'opacity .15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {creating === 'editor' ? <span style={{ width: 12, height: 12, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} /> : null}
+              + Editor
+            </button>
+            <button onClick={() => createInvite('viewer')} disabled={creating !== null}
+              style={{ flex: 1, padding: '11px 16px', background: '#fff', color: '#0f0f0f', border: '1px solid #eee', cursor: creating !== null ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 500, fontFamily: 'inherit', opacity: creating !== null ? 0.5 : 1, transition: 'opacity .15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {creating === 'viewer' ? <span style={{ width: 12, height: 12, border: '1.5px solid #ccc', borderTopColor: '#0f0f0f', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} /> : null}
+              + Solo lectura
+            </button>
+          </div>
+          {inviteError && <p style={{ fontSize: 11, color: '#e05', marginTop: 8 }}>{inviteError}</p>}
+          {!inviteError && <p style={{ fontSize: 11, color: '#ccc', marginTop: 8 }}>Los enlaces caducan en 7 días y son de un solo uso.</p>}
+        </div>
       </div>
-    </>
+    </div>
   )
 }
 
-// ── Page ──────────────────────────────────────────────────
 export default function HomePage() {
-  const [loading,      setLoading]      = useState(true)
-  const [profile,      setProfile]      = useState<Profile | null>(null)
-  const [artist,       setArtist]       = useState<Artist | null>(null)
-  const [recent,       setRecent]       = useState<RecentItem[]>([])
-  const [showQR,       setShowQR]       = useState(false)
-  const [menuOpen,     setMenuOpen]     = useState(false)
-  const [scrolled,     setScrolled]     = useState(false)
-  const [navHeight,    setNavHeight]    = useState(64)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const navRef    = useRef<HTMLDivElement>(null)
-  const router = useRouter()
-  const supabase = createClient()
-
+  const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [artist, setArtist] = useState<Artist | null>(null)
+  const [recent, setRecent] = useState<RecentItem[]>([])
+  const [showQR, setShowQR] = useState(false)
+  const [showTeam, setShowTeam] = useState(false)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null)
+  const [albumCount, setAlbumCount] = useState(0)
+  const [trackCount, setTrackCount] = useState(0)
+  const router = useRouter()
+  const supabase = createClient()
 
   useEffect(() => {
     ;(async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
-
       const [pRes, aRes] = await Promise.all([
         supabase.from('profiles').select('display_name,avatar_path').eq('user_id', user.id).single(),
         supabase.from('artists').select('id,name,handle,avatar_path,bio').eq('owner_user_id', user.id).order('created_at').limit(1).single(),
@@ -135,254 +261,171 @@ export default function HomePage() {
       setProfile(pRes.data)
       const a = aRes.data as Artist | null
       setArtist(a)
-
-      // Resolver URLs de avatares
       if (a?.avatar_path) {
-        const { data: signedData } = await supabase.storage
-          .from('avatars')
-          .createSignedUrl(a.avatar_path, 3600)
-        setAvatarUrl(signedData?.signedUrl ?? null)
+        const { data } = await supabase.storage.from('avatars').createSignedUrl(a.avatar_path, 86400)
+        if (data?.signedUrl) setAvatarUrl(data.signedUrl)
       }
-
       if (pRes.data?.avatar_path) {
-        const { data: signedData } = await supabase.storage
-          .from('avatars')
-          .createSignedUrl(pRes.data.avatar_path, 3600)
-        setProfileAvatarUrl(signedData?.signedUrl ?? null)
+        const { data } = await supabase.storage.from('avatars').createSignedUrl(pRes.data.avatar_path, 86400)
+        if (data?.signedUrl) setProfileAvatarUrl(data.signedUrl)
       }
-
       if (a) {
         const [albRes, trRes] = await Promise.all([
-          supabase.from('albums').select('id,title,cover_path,updated_at,artists(name)').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(6),
-          supabase.from('tracks').select('id,title,updated_at,artists(name)').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(6),
+          supabase.from('albums').select('id,title,cover_path,updated_at').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
+          supabase.from('tracks').select('id,title,updated_at').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
         ])
+        setAlbumCount(albRes.data?.length ?? 0)
+        setTrackCount(trRes.data?.length ?? 0)
         const items: RecentItem[] = [
-          ...(albRes.data ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'album' as const, artist_name: x.artists?.name ?? '', updated_at: x.updated_at, cover_path: x.cover_path })),
-          ...(trRes.data  ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'track' as const, artist_name: x.artists?.name ?? '', updated_at: x.updated_at, cover_path: null })),
-        ].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 8)
+          ...(albRes.data ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'album' as const, updated_at: x.updated_at, cover_path: x.cover_path })),
+          ...(trRes.data ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'track' as const, updated_at: x.updated_at, cover_path: null })),
+        ].sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at)).slice(0, 6)
         setRecent(items)
       }
       setLoading(false)
     })()
   }, [])
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const onScroll = () => setScrolled(el.scrollTop > 80)
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [loading])
-
-  useEffect(() => {
-    if (!navRef.current) return
-    const observer = new ResizeObserver(entries => {
-      setNavHeight(entries[0].contentRect.height)
-    })
-    observer.observe(navRef.current)
-    return () => observer.disconnect()
-  }, [])
-
   const signOut = async () => { await supabase.auth.signOut(); router.push('/login') }
-  const appUrl = process.env.NEXT_PUBLIC_SITE_URL ?? (typeof window !== 'undefined' ? window.location.origin : '')
 
   if (loading) return (
-    <div style={{ minHeight: '100vh', background: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 20, height: 20, border: '2px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <div className="loader-wrap">
+      <div className="loader" />
+      <style>{styles}</style>
     </div>
   )
 
+  const hour = new Date().getHours()
+  const greet = hour < 6 ? 'Buenas noches' : hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches'
+  const firstName = profile?.display_name?.split(' ')[0]
+
   return (
-    <div style={{ position: 'relative', height: '100dvh', background: '#fafafa', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+    <div className="page">
+      <style>{styles}</style>
+      {showQR && <QRModal url={typeof window !== 'undefined' ? window.location.origin : ''} onClose={() => setShowQR(false)} />}
+      {showTeam && artist && <TeamModal artist={artist} onClose={() => setShowTeam(false)} />}
       <WaveBackground />
-      {showQR && <QRModal url={appUrl} onClose={() => setShowQR(false)} />}
-
-      {/* ── Fixed top bar ───────────────────────────────── */}
-      <header style={{
-        position: 'relative', zIndex: 40, flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 20px', height: 56,
-        background: '#0f0f0f',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-      }}>
-        {/* Logo / Avatar small */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
-            background: '#2a2a2a', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            opacity: scrolled ? 1 : 0,
-            transform: scrolled ? 'scale(1)' : 'scale(0.6)',
-            transition: 'opacity 0.3s ease, transform 0.3s ease',
-          }}>
-            {avatarUrl ? <img src={avatarUrl} alt={artist?.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Icon n="music" size={14} color="#666" />}
-          </div>
-          <span style={{
-            fontSize: '0.8rem', fontWeight: 300, letterSpacing: '0.2em',
-            textTransform: 'uppercase', color: '#fff',
-            opacity: scrolled ? 0 : 1,
-            transition: 'opacity 0.3s ease',
-            position: scrolled ? 'absolute' : 'relative',
-          }}>
-            unreleased
-          </span>
-          {scrolled && (
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{artist?.name}</span>
-          )}
-        </div>
-
-        {/* Right actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button onClick={() => setShowQR(true)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', cursor: 'pointer', borderRadius: 0, color: 'rgba(255,255,255,0.45)', transition: 'all 0.2s' }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)'; e.currentTarget.style.color = '#fff' }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}>
-            <Icon n="qr" size={14} />
-          </button>
-          <button onClick={signOut}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: '1px solid rgba(255,255,255,0.12)', background: 'transparent', cursor: 'pointer', borderRadius: 0, color: 'rgba(255,255,255,0.45)', transition: 'all 0.2s' }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)'; e.currentTarget.style.color = '#fff' }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)'; e.currentTarget.style.color = 'rgba(255,255,255,0.45)' }}>
-            <Icon n="logout" size={14} />
-          </button>
-        </div>
-      </header>
-
-      {/* ── Scrollable content ──────────────────────────── */}
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', position: 'relative', zIndex: 10 }}>
-
-        {/* Hero banner */}
-        <div style={{ position: 'relative', width: '100%', paddingTop: '38%', minHeight: 200, background: '#f0f0f0', overflow: 'hidden', flexShrink: 0 }}>
-          {avatarUrl ? (
-            <img src={avatarUrl} alt={artist?.name}
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', filter: 'brightness(0.88)' }} />
-          ) : (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #f5f5f5, #e8e8e8)' }}>
-              <Icon n="music" size={48} color="#ddd" />
-            </div>
-          )}
-          {/* Gradient overlay bottom */}
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '60%', background: 'linear-gradient(to top, rgba(250,250,250,1) 0%, rgba(250,250,250,0.4) 60%, transparent 100%)' }} />
-
-          {/* Artist info over banner */}
-          <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '0 20px 20px' }}>
-            <h1 style={{ fontSize: 'clamp(1.6rem, 5vw, 2.8rem)', fontWeight: 200, letterSpacing: '-0.02em', color: '#0f0f0f', lineHeight: 1.1 }}>
-              {artist?.name ?? profile?.display_name}
-            </h1>
-            {artist?.handle && (
-              <p style={{ fontSize: 13, color: '#999', marginTop: 4 }}>@{artist.handle}</p>
-            )}
-            {artist?.bio && (
-              <p style={{ fontSize: 13, color: '#888', marginTop: 6, maxWidth: 480, lineHeight: 1.5 }}>{artist.bio}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Content below hero */}
-        <div style={{ padding: '28px 20px 100px', maxWidth: 800, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
-
-          {/* Recent */}
-          <section style={{ marginBottom: 40 }}>
-            <h2 style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#ccc', marginBottom: 16 }}>
-              Actividad reciente
-            </h2>
-
-            {recent.length === 0 ? (
-              <div style={{ padding: '48px 20px', border: '1.5px dashed #eee', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' }}>
-                <Icon n="music" size={28} color="#e0e0e0" />
-                <p style={{ fontSize: 14, color: '#ccc' }}>Aún no hay música</p>
-                <p style={{ fontSize: 12, color: '#ddd' }}>Sube tu primer track usando el botón +</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {recent.map((item, i) => (
-                  <div key={item.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 0', borderBottom: i < recent.length - 1 ? '1px solid #f5f5f5' : 'none', cursor: 'pointer', transition: 'opacity 0.15s' }}
-                    onMouseEnter={e => (e.currentTarget.style.opacity = '0.7')}
-                    onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-                  >
-                    <div style={{ width: 44, height: 44, borderRadius: 6, background: '#f2f2f2', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {item.cover_path
-                        ? <img src={item.cover_path} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt={item.title} />
-                        : <Icon n={item.type === 'album' ? 'albums' : 'tracks'} size={16} color="#ccc" />}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontSize: 14, fontWeight: 500, color: '#0f0f0f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</p>
-                      <p style={{ fontSize: 12, color: '#bbb', marginTop: 2 }}><TimeAgo date={item.updated_at} /></p>
-                    </div>
-                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#d5d5d5', flexShrink: 0 }}>
-                      {item.type === 'album' ? 'álbum' : 'track'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
+      <div className="top-bar">
+        <span className="logo">unreleased</span>
+        <div className="top-actions">
+          <button className="ghost-btn" onClick={() => setShowQR(true)}><Ic n="qr" s={15} /></button>
+          <button className="ghost-btn" onClick={() => {}}><Ic n="set" s={15} /></button>
+          <button className="ghost-btn" onClick={signOut}><Ic n="logout" s={15} /></button>
         </div>
       </div>
-
-      {/* ── FAB action button ───────────────────────────── */}
-      <div style={{
-        position: 'fixed',
-        bottom: navHeight + 16,
-        right: 24,
-        zIndex: 80,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-end',
-      }}>
-        <ActionMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
-        <button
-          onClick={() => setMenuOpen(!menuOpen)}
-          style={{
-            width: 48, height: 48,
-            background: '#0f0f0f',
-            border: 'none', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 4px 24px rgba(0,0,0,0.18)',
-            transition: 'transform 0.25s ease, background 0.2s ease',
-            transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
-            borderRadius: 0,
-          }}
-          onMouseEnter={e => (e.currentTarget.style.background = '#333')}
-          onMouseLeave={e => (e.currentTarget.style.background = '#0f0f0f')}
-        >
-          <Icon n="plus" size={20} color="white" sw={2} />
-        </button>
-      </div>
-
-      {/* ── Bottom nav ──────────────────────────────────── */}
-      <nav ref={navRef} style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        zIndex: 30, display: 'flex',
-        background: '#0f0f0f',
-        borderTop: '1px solid rgba(255,255,255,0.06)',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      }}>
-        {(
-          [
-            { key: 'home',   label: 'Inicio',  icon: 'music'   },
-            { key: 'albums', label: 'Álbumes', icon: 'albums'  },
-            { key: 'tracks', label: 'Tracks',  icon: 'tracks'  },
-            { key: 'shares', label: 'Links',   icon: 'link'    },
-          ]
-        ).map(item => (
-          <button key={item.key}
-            style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '10px 4px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'Outfit, sans-serif', color: 'rgba(255,255,255,0.35)', transition: 'color 0.2s' }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
-            onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.35)')}
-          >
-            <Icon n={item.icon} size={20} color="currentColor" />
-            <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: '0.05em' }}>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        * { -webkit-tap-highlight-color: transparent; }
-      `}</style>
+      <section className="hero">
+        {avatarUrl && (
+          <div className="hero-img-wrap">
+            <img src={avatarUrl} alt="" className="hero-img" />
+          </div>
+        )}
+        <p className="greet">{greet}{firstName ? `, ${firstName}` : ''}</p>
+        <h1 className="artist-name">{artist?.name ?? 'Tu espacio'}</h1>
+        {artist?.handle && <p className="handle">@{artist.handle}</p>}
+        {artist?.bio && <p className="bio">{artist.bio}</p>}
+        <div className="stats">
+          <div className="stat">
+            <span className="stat-n">{trackCount}</span>
+            <span className="stat-l">tracks</span>
+          </div>
+          <div className="stat-sep" />
+          <div className="stat">
+            <span className="stat-n">{albumCount}</span>
+            <span className="stat-l">álbumes</span>
+          </div>
+        </div>
+      </section>
+      <section className="actions-section">
+        <p className="label-xs">Crear</p>
+        <div className="actions-row">
+          {([
+            { n: 'upload', l: 'Subir track' },
+            { n: 'disc',   l: 'Nuevo álbum' },
+            { n: 'users',  l: 'Equipo', action: () => setShowTeam(true) },
+          ] as const).map(a => (
+            <button key={a.n} className="action-pill" onClick={'action' in a ? a.action : undefined}>
+              <Ic n={a.n} s={14} c="#999" />
+              <span>{a.l}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="recent-section">
+        <p className="label-xs">Reciente</p>
+        {recent.length === 0 ? (
+          <div className="empty">
+            <Ic n="music" s={22} c="#e0e0e0" />
+            <p>Nada por aquí todavía</p>
+            <span>Sube tu primer track para empezar</span>
+          </div>
+        ) : (
+          <div className="recent-list">
+            {recent.map((item) => (
+              <button key={item.id} className="recent-item">
+                <div className={`ri-thumb ${item.type === 'track' ? 'round' : ''}`}>
+                  {item.cover_path
+                    ? <img src={item.cover_path} alt="" />
+                    : <Ic n={item.type === 'album' ? 'disc' : 'music'} s={14} c="#d5d5d5" />}
+                </div>
+                <div className="ri-info">
+                  <span className="ri-title">{item.title}</span>
+                  <span className="ri-meta">{item.type === 'album' ? 'Álbum' : 'Track'} · <TimeAgo date={item.updated_at} /></span>
+                </div>
+                <Ic n="arrow" s={13} c="#ddd" />
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
+
+const styles = `
+  @keyframes spin { to { transform: rotate(360deg) } }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(12px) } to { opacity:1; transform:translateY(0) } }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { margin: 0; background: #fafafa; }
+  ::selection { background: rgba(15,15,15,0.06); }
+  .page { position: relative; min-height: 100dvh; font-family: 'Outfit', -apple-system, system-ui, sans-serif; background: transparent; overflow-x: hidden; }
+  .top-bar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 48px; background: rgba(250,250,250,0.6); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); }
+  .logo { font-size: 12px; font-weight: 300; letter-spacing: 0.28em; text-transform: uppercase; color: #0f0f0f; }
+  .top-actions { display: flex; gap: 2px; }
+  .ghost-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: none; border: none; cursor: pointer; color: #bbb; border-radius: 0; transition: color .15s; }
+  .ghost-btn:hover { color: #0f0f0f; }
+  .hero { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; padding: 28px 24px 28px; text-align: center; animation: fadeUp .5s ease both; }
+  .hero-img-wrap { position: relative; width: 180px; height: 180px; margin-bottom: 28px; flex-shrink: 0; }
+  .hero-img { width: 100%; height: 100%; object-fit: cover; opacity: 1; display: block; }
+  .greet { font-size: 12px; color: #bbb; font-weight: 400; letter-spacing: 0.03em; margin-bottom: 6px; }
+  .artist-name { font-size: clamp(26px, 6vw, 36px); font-weight: 200; letter-spacing: -0.03em; color: #0f0f0f; line-height: 1.1; margin-bottom: 4px; }
+  .handle { font-size: 12px; color: #ccc; margin-bottom: 8px; }
+  .bio { font-size: 13px; color: #aaa; line-height: 1.55; max-width: 380px; margin-bottom: 0; }
+  .stats { display: flex; align-items: center; gap: 16px; margin-top: 20px; }
+  .stat { display: flex; align-items: baseline; gap: 5px; }
+  .stat-n { font-size: 20px; font-weight: 200; color: #0f0f0f; line-height: 1; }
+  .stat-l { font-size: 10px; font-weight: 500; letter-spacing: 0.06em; color: #ccc; text-transform: lowercase; }
+  .stat-sep { width: 1px; height: 16px; background: #eee; }
+  .actions-section { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 0 24px 24px; animation: fadeUp .5s ease .08s both; }
+  .label-xs { font-size: 10px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: #ccc; margin-bottom: 10px; }
+  .actions-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .action-pill { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px 9px 12px; background: rgba(255,255,255,0.55); backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 500; color: #666; transition: all .15s; border-radius: 0; }
+  .action-pill:hover { border-color: rgba(0,0,0,0.1); color: #0f0f0f; background: rgba(255,255,255,0.8); }
+  .recent-section { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 0 24px 60px; animation: fadeUp .5s ease .14s both; }
+  .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px 20px; text-align: center; }
+  .empty p { font-size: 13px; color: #bbb; }
+  .empty span { font-size: 11px; color: #ddd; }
+  .recent-list { display: flex; flex-direction: column; }
+  .recent-item { display: flex; align-items: center; gap: 14px; padding: 12px 0; border: none; border-bottom: 1px solid rgba(0,0,0,0.03); background: none; cursor: pointer; width: 100%; font-family: inherit; text-align: left; transition: opacity .12s; }
+  .recent-item:last-child { border-bottom: none; }
+  .recent-item:hover { opacity: 0.55; }
+  .ri-thumb { width: 38px; height: 38px; flex-shrink: 0; background: #f5f5f5; overflow: hidden; display: flex; align-items: center; justify-content: center; border-radius: 3px; }
+  .ri-thumb.round { border-radius: 50%; }
+  .ri-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .ri-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .ri-title { font-size: 13px; font-weight: 500; color: #0f0f0f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ri-meta { font-size: 11px; color: #ccc; }
+  .loader-wrap { min-height: 100dvh; background: #fafafa; display: flex; align-items: center; justify-content: center; }
+  .loader { width: 16px; height: 16px; border: 1.5px solid #eee; border-top-color: #0f0f0f; border-radius: 50%; animation: spin .7s linear infinite; }
+  .qr-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(250,250,250,0.6); backdrop-filter: blur(16px); display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .qr-box { background: #fff; padding: 36px; display: flex; flex-direction: column; align-items: center; gap: 24px; width: 100%; max-width: 280px; box-shadow: 0 12px 48px rgba(0,0,0,0.08); }
+`
