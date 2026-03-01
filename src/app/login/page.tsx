@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WaveBackground } from '@/components/ui/wave-background'
@@ -59,7 +59,21 @@ function OTPInput({ value, onChange, idPrefix = 'otp' }: { value: string; onChan
   )
 }
 
-export default function LoginPage() {
+function SearchParamsHandler({ setError }: { setError: (e: string) => void }) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const code = searchParams.get('code')
+    const urlError = searchParams.get('error')
+    if (code) { router.replace(`/auth/callback?code=${code}`); return }
+    if (urlError) setError(decodeURIComponent(urlError))
+  }, [searchParams, router, setError])
+
+  return null
+}
+
+function LoginPageContent() {
   const [mode, setMode] = useState<Mode>('login')
   const [step, setStep] = useState<Step>('form')
   const [email, setEmail] = useState('')
@@ -73,15 +87,7 @@ export default function LoginPage() {
   const [animating, setAnimating] = useState(false)
 
   const router = useRouter()
-  const searchParams = useSearchParams()
   const supabase = createClient()
-
-  useEffect(() => {
-    const code = searchParams.get('code')
-    const urlError = searchParams.get('error')
-    if (code) { router.replace(`/auth/callback?code=${code}`); return }
-    if (urlError) setError(decodeURIComponent(urlError))
-  }, [searchParams, router])
 
   const switchMode = (next: Mode) => {
     if (animating || mode === next) return
@@ -155,6 +161,7 @@ export default function LoginPage() {
 
   if (step === 'otp') return (
     <div className="relative min-h-screen bg-[#fafafa]">
+      <Suspense><SearchParamsHandler setError={(e) => setError(e)} /></Suspense>
       <WaveBackground />
       <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-6">
         <div className="max-w-sm w-full text-center flex flex-col items-center gap-6 animate-fade-in-up">
@@ -182,6 +189,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen bg-[#fafafa]">
+      <Suspense><SearchParamsHandler setError={(e) => setError(e)} /></Suspense>
       <WaveBackground />
       <div className="relative z-10 min-h-screen flex flex-col">
         <header className="w-full pt-12 pb-4 flex justify-center animate-fade-in-up">
@@ -260,5 +268,13 @@ export default function LoginPage() {
         </main>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageContent />
+    </Suspense>
   )
 }
