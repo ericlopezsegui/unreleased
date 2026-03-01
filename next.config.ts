@@ -1,9 +1,7 @@
 import withPWA from '@ducanh2912/next-pwa'
 import type { NextConfig } from 'next'
 
-const nextConfig: NextConfig = {
-  reactCompiler: true,
-}
+const nextConfig: NextConfig = {}
 
 export default withPWA({
   dest: 'public',
