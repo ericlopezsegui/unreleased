@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
@@ -20,7 +20,7 @@ function formatBytes(b: number) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`
 }
 
-export default function NewTrackPage() {
+function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; artistId: string | null }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [audioFile, setAudioFile] = useState<File | null>(null)
@@ -35,9 +35,6 @@ export default function NewTrackPage() {
   const audioRef = useRef<HTMLInputElement>(null)
   const coverRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const albumId = searchParams.get('album')
-  const artistId = searchParams.get('artist')
   const supabase = createClient()
   const [analyzing, setAnalyzing] = useState(false)
   const { setTitle: setHeaderTitle, setBackHref: setHeaderBackHref } = useHeaderContext()
@@ -273,5 +270,23 @@ export default function NewTrackPage() {
         </form>
       </div>
     </div>
+  )
+}
+
+function NewTrackPageWrapper() {
+  const searchParams = useSearchParams()
+  return (
+    <NewTrackPageContent
+      albumId={searchParams.get('album')}
+      artistId={searchParams.get('artist')}
+    />
+  )
+}
+
+export default function NewTrackPage() {
+  return (
+    <Suspense>
+      <NewTrackPageWrapper />
+    </Suspense>
   )
 }
