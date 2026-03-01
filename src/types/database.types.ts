@@ -129,6 +129,7 @@ export interface Database {
           album_id: string | null
           title: string
           description: string | null
+          cover_path: string | null
           position: number | null
           created_at: string
           updated_at: string
@@ -139,6 +140,7 @@ export interface Database {
           album_id?: string | null
           title: string
           description?: string | null
+          cover_path?: string | null
           position?: number | null
           created_at?: string
           updated_at?: string
@@ -149,6 +151,7 @@ export interface Database {
           album_id?: string | null
           title?: string
           description?: string | null
+          cover_path?: string | null
           position?: number | null
           created_at?: string
           updated_at?: string

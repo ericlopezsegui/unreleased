@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Maskable: full-bleed white background, content within 80% safe zone -->
+  <rect width="256" height="256" fill="#ffffff"/>
+
+  <!-- Forma U minimal (centrada dentro de la safe zone) -->
+  <path
+    d="M72 72
+       V148
+       C72 186 100 212 128 212
+       C156 212 184 186 184 148
+       V72"
+    fill="none"
+    stroke="#111111"
+    stroke-width="20"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Corte superior (concepto unreleased) -->
+  <line
+    x1="104"
+    y1="72"
+    x2="152"
+    y2="72"
+    stroke="#ffffff"
+    stroke-width="24"
+    stroke-linecap="round"
+  />
+</svg>
