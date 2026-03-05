@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { Player } from '@/components/ui/player'
 import { WaveBackground } from '@/components/ui/wave-background'
 import { AppHeader } from '@/components/ui/app-header'
+import { TabBar } from '@/components/ui/tab-bar'
 import { HeaderProvider } from '@/lib/header-context'
 
 const AUTH_PREFIXES = ['/login', '/setup', '/onboarding', '/auth', '/invite']
@@ -23,6 +24,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </div>
       <Player />
+      {/* Bottom tab bar — persistent, hidden on auth pages */}
+      <TabBar />
       <style>{`@keyframes pageIn { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:none } }`}</style>
     </>
   )

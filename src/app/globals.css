@@ -45,7 +45,7 @@ body {
   border-bottom: 1.5px solid #e0e0e0;
   transition: border-color 0.3s ease;
 }
-.input-field::placeholder { color: #c5c5c5; }
+.input-field::placeholder { color: #aaa; }
 .input-field:hover { border-color: #aaa; }
 .input-field:focus { border-color: #0f0f0f; }
 
@@ -77,7 +77,7 @@ body {
 /* Link hover underline from left */
 .link-hover {
   position: relative;
-  color: #aaa;
+  color: #888;
   transition: color 0.3s ease;
   background: none;
   border: none;

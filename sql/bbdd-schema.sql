@@ -1,19 +1,25 @@
 -- =========================================================
--- EXTENSIONS
+-- EXTENSIONES
 -- =========================================================
 create extension if not exists pgcrypto;
 
 -- =========================================================
--- HELPERS: updated_at
+-- HELPERS
 -- =========================================================
 create or replace function public.set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
+returns trigger language plpgsql as $$
+begin new.updated_at = now(); return new; end;
+$$;
+
+-- SECURITY DEFINER helpers para storage policies (evitan recursion RLS)
+create or replace function public.is_artist_owner(aid uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.artists a where a.id = aid and a.owner_user_id = auth.uid());
+$$;
+
+create or replace function public.is_artist_member_sd(aid uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists(select 1 from public.artist_members am where am.artist_id = aid and am.user_id = auth.uid());
 $$;
 
 -- =========================================================
@@ -53,13 +59,11 @@ create trigger trg_artists_updated_at
 before update on public.artists
 for each row execute function public.set_updated_at();
 
--- handle: único case-insensitive (y permite null)
 create unique index if not exists artists_handle_lower_unique
-on public.artists (lower(handle))
-where handle is not null;
+on public.artists (lower(handle)) where handle is not null;
 
 -- =========================================================
--- 3) ARTIST_MEMBERS (colaboración)
+-- 3) ARTIST_MEMBERS (colaboracion)
 -- =========================================================
 create table if not exists public.artist_members (
   artist_id uuid not null references public.artists(id) on delete cascade,
@@ -69,34 +73,19 @@ create table if not exists public.artist_members (
   primary key (artist_id, user_id)
 );
 
--- helper: "soy miembro del artista"
+-- Helper (NON security definer, para RLS policies de tablas)
 create or replace function public.is_artist_member(aid uuid)
-returns boolean
-language sql
-stable
-as $$
-  select exists(
-    select 1
-    from public.artist_members m
-    where m.artist_id = aid
-      and m.user_id = auth.uid()
-  );
+returns boolean language sql stable as $$
+  select exists(select 1 from public.artist_members m where m.artist_id = aid and m.user_id = auth.uid());
 $$;
 
--- Al crear artista -> insertar automáticamente owner en artist_members
--- CAMBIO: Usar BEFORE INSERT y SECURITY DEFINER para evitar conflicto con RLS
+-- Auto-insert owner al crear artista
 create or replace function public.handle_new_artist_member()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
+returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  -- Insertar en artist_members inmediatamente
   insert into public.artist_members (artist_id, user_id, role)
   values (new.id, new.owner_user_id, 'owner')
   on conflict (artist_id, user_id) do nothing;
-
   return new;
 end;
 $$;
@@ -104,8 +93,7 @@ $$;
 drop trigger if exists on_artist_created_add_owner on public.artists;
 create trigger on_artist_created_add_owner
 after insert on public.artists
-for each row
-execute function public.handle_new_artist_member();
+for each row execute function public.handle_new_artist_member();
 
 -- =========================================================
 -- 4) ALBUMS
@@ -145,7 +133,6 @@ create trigger trg_tracks_updated_at
 before update on public.tracks
 for each row execute function public.set_updated_at();
 
--- orden estable dentro de álbum (opcional pero recomendable)
 create unique index if not exists tracks_album_position_unique
 on public.tracks(album_id, position)
 where album_id is not null and position is not null;
@@ -173,10 +160,8 @@ create trigger trg_versions_updated_at
 before update on public.track_versions
 for each row execute function public.set_updated_at();
 
--- 1 activa por track
 create unique index if not exists one_active_version_per_track
-on public.track_versions(track_id)
-where is_active;
+on public.track_versions(track_id) where is_active;
 
 -- =========================================================
 -- 7) STEMS
@@ -190,7 +175,6 @@ create table if not exists public.stems (
   created_at timestamptz not null default now()
 );
 
--- evita duplicados prácticos por version + stem_type (+label opcional)
 create unique index if not exists stems_unique_per_version_type_label
 on public.stems (version_id, stem_type, coalesce(label,''));
 
@@ -221,14 +205,14 @@ create table if not exists public.share_links (
   expires_at timestamptz,
   created_at timestamptz not null default now(),
   constraint share_scope_fk_check check (
-    (scope='album' and album_id is not null and track_id is null and version_id is null) or
-    (scope='track' and track_id is not null and album_id is null and version_id is null) or
-    (scope='version' and version_id is not null and album_id is null and track_id is null)
+    (scope='album'   and album_id   is not null and track_id is null and version_id is null) or
+    (scope='track'   and track_id   is not null and album_id is null and version_id is null) or
+    (scope='version' and version_id is not null and album_id is null and track_id   is null)
   )
 );
 
 -- =========================================================
--- 10) DOWNLOAD_EVENTS (opcional)
+-- 10) DOWNLOAD_EVENTS
 -- =========================================================
 create table if not exists public.download_events (
   id uuid primary key default gen_random_uuid(),
@@ -240,14 +224,14 @@ create table if not exists public.download_events (
 );
 
 -- =========================================================
--- 11) ARTIST_INVITES (invitaciones por enlace)
+-- 11) ARTIST_INVITES
 -- =========================================================
 create table if not exists public.artist_invites (
   id uuid primary key default gen_random_uuid(),
   artist_id uuid not null references public.artists(id) on delete cascade,
   created_by uuid not null references auth.users(id) on delete cascade,
   role text not null default 'viewer' check (role in ('editor','viewer')),
-  token text not null unique default translate(encode(gen_random_bytes(24), 'base64'), '+/=', '-_'),
+  token text not null unique default upper(encode(gen_random_bytes(3), 'hex')),
   used_by uuid references auth.users(id) on delete set null,
   used_at timestamptz,
   expires_at timestamptz not null default (now() + interval '7 days'),
@@ -257,81 +241,33 @@ create table if not exists public.artist_invites (
 create index if not exists idx_artist_invites_token on public.artist_invites(token);
 create index if not exists idx_artist_invites_artist on public.artist_invites(artist_id);
 
-alter table public.artist_invites enable row level security;
-
--- Owner puede ver y gestionar sus invites
-drop policy if exists invites_select_owner on public.artist_invites;
-create policy invites_select_owner
-on public.artist_invites for select
-using (created_by = auth.uid());
-
-drop policy if exists invites_insert_owner on public.artist_invites;
-create policy invites_insert_owner
-on public.artist_invites for insert
-with check (
-  created_by = auth.uid()
-);
-
-drop policy if exists invites_delete_owner on public.artist_invites;
-create policy invites_delete_owner
-on public.artist_invites for delete
-using (created_by = auth.uid());
-
--- Cualquier usuario autenticado puede leer un invite por token (para aceptarlo)
--- SIN condiciones que llamen a otras tablas con RLS
-drop policy if exists invites_select_by_token on public.artist_invites;
-create policy invites_select_by_token
-on public.artist_invites for select
-using (
-  auth.uid() is not null
-);
-
--- El invitado puede marcar el invite como usado
-drop policy if exists invites_update_accept on public.artist_invites;
-create policy invites_update_accept
-on public.artist_invites for update
-using (auth.uid() is not null)
-with check (used_by = auth.uid());
-
 -- =========================================================
--- INDEXES (rendimiento)
+-- INDEXES
 -- =========================================================
-create index if not exists idx_tracks_artist on public.tracks(artist_id);
-create index if not exists idx_tracks_album on public.tracks(album_id);
-
-create index if not exists idx_albums_artist on public.albums(artist_id);
-
-create index if not exists idx_versions_track on public.track_versions(track_id);
-
-create index if not exists idx_stems_version on public.stems(version_id);
-
-create index if not exists idx_cover_assets_artist on public.cover_assets(artist_id);
-create index if not exists idx_cover_assets_album on public.cover_assets(album_id);
-create index if not exists idx_cover_assets_version on public.cover_assets(version_id);
-
-create index if not exists idx_share_links_hash on public.share_links(token_hash);
+create index if not exists idx_tracks_artist          on public.tracks(artist_id);
+create index if not exists idx_tracks_album           on public.tracks(album_id);
+create index if not exists idx_albums_artist          on public.albums(artist_id);
+create index if not exists idx_versions_track         on public.track_versions(track_id);
+create index if not exists idx_stems_version          on public.stems(version_id);
+create index if not exists idx_cover_assets_artist    on public.cover_assets(artist_id);
+create index if not exists idx_cover_assets_album     on public.cover_assets(album_id);
+create index if not exists idx_cover_assets_version   on public.cover_assets(version_id);
+create index if not exists idx_share_links_hash       on public.share_links(token_hash);
 create index if not exists idx_share_links_created_by on public.share_links(created_by);
-
 create index if not exists idx_download_events_share_link on public.download_events(share_link_id);
-create index if not exists idx_download_events_version on public.download_events(version_id);
-
--- NUEVO: índice para consultas "mis artistas"
-create index if not exists idx_artist_members_user on public.artist_members(user_id);
+create index if not exists idx_download_events_version    on public.download_events(version_id);
+create index if not exists idx_artist_members_user        on public.artist_members(user_id);
 
 -- =========================================================
--- HELPERS: Prevenir múltiples versiones activas
+-- HELPERS: Prevenir multiples versiones activas
 -- =========================================================
 create or replace function public.ensure_single_active_version()
-returns trigger
-language plpgsql
-as $$
+returns trigger language plpgsql as $$
 begin
   if new.is_active then
     update public.track_versions
     set is_active = false
-    where track_id = new.track_id
-      and id != new.id
-      and is_active = true;
+    where track_id = new.track_id and id != new.id and is_active = true;
   end if;
   return new;
 end;
@@ -340,541 +276,415 @@ $$;
 drop trigger if exists trg_ensure_single_active_version on public.track_versions;
 create trigger trg_ensure_single_active_version
 before insert or update on public.track_versions
-for each row
-when (new.is_active = true)
+for each row when (new.is_active = true)
 execute function public.ensure_single_active_version();
 
 -- =========================================================
 -- RLS ENABLE
 -- =========================================================
-alter table public.profiles enable row level security;
-alter table public.artists enable row level security;
-alter table public.artist_members enable row level security;
-alter table public.albums enable row level security;
-alter table public.tracks enable row level security;
-alter table public.track_versions enable row level security;
-alter table public.stems enable row level security;
-alter table public.cover_assets enable row level security;
-alter table public.share_links enable row level security;
+alter table public.profiles        enable row level security;
+alter table public.artists         enable row level security;
+alter table public.artist_members  enable row level security;
+alter table public.albums          enable row level security;
+alter table public.tracks          enable row level security;
+alter table public.track_versions  enable row level security;
+alter table public.stems           enable row level security;
+alter table public.cover_assets    enable row level security;
+alter table public.share_links     enable row level security;
 alter table public.download_events enable row level security;
+alter table public.artist_invites  enable row level security;
 
 -- =========================================================
--- POLICIES (limpio: evitar duplicados, añadir delete/update donde falta)
+-- POLICIES
 -- =========================================================
 
--- PROFILES: solo tú
+-- PROFILES ------------------------------------------------
 drop policy if exists profiles_select_own on public.profiles;
-create policy profiles_select_own
-on public.profiles for select
-using (user_id = auth.uid());
+create policy profiles_select_own on public.profiles
+for select using (user_id = auth.uid());
 
 drop policy if exists profiles_insert_own on public.profiles;
-create policy profiles_insert_own
-on public.profiles for insert
-with check (user_id = auth.uid());
+create policy profiles_insert_own on public.profiles
+for insert with check (user_id = auth.uid());
 
 drop policy if exists profiles_update_own on public.profiles;
-create policy profiles_update_own
-on public.profiles for update
-using (user_id = auth.uid())
-with check (user_id = auth.uid());
+create policy profiles_update_own on public.profiles
+for update using (user_id = auth.uid()) with check (user_id = auth.uid());
 
--- ARTISTS: select si eres miembro O si eres owner directo
+-- ARTISTS -------------------------------------------------
 drop policy if exists artists_select_member on public.artists;
-create policy artists_select_member
-on public.artists for select
-using (
+create policy artists_select_member on public.artists
+for select using (
   owner_user_id = auth.uid()
-  or
-  exists(
-    select 1 from public.artist_members m
-    where m.artist_id = id
-      and m.user_id = auth.uid()
-  )
+  or exists(select 1 from public.artist_members m where m.artist_id = id and m.user_id = auth.uid())
 );
 
 drop policy if exists artists_insert_self_owner on public.artists;
-create policy artists_insert_self_owner
-on public.artists for insert
-with check (owner_user_id = auth.uid());
+create policy artists_insert_self_owner on public.artists
+for insert with check (owner_user_id = auth.uid());
 
 drop policy if exists artists_update_owner on public.artists;
-create policy artists_update_owner
-on public.artists for update
-using (owner_user_id = auth.uid())
-with check (owner_user_id = auth.uid());
+create policy artists_update_owner on public.artists
+for update using (owner_user_id = auth.uid()) with check (owner_user_id = auth.uid());
 
 drop policy if exists artists_delete_owner on public.artists;
-create policy artists_delete_owner
-on public.artists for delete
-using (owner_user_id = auth.uid());
+create policy artists_delete_owner on public.artists
+for delete using (owner_user_id = auth.uid());
 
--- ARTIST_MEMBERS: simplificar - cualquier miembro del artista puede ver a todos los miembros del mismo artista
--- select: solo tu propia fila (para evitar recursión)
+-- ARTIST_MEMBERS ------------------------------------------
+-- select: solo tu propia fila (evita recursion)
 drop policy if exists artist_members_select_member on public.artist_members;
-create policy artist_members_select_member
-on public.artist_members for select
-using (user_id = auth.uid());s(
-ic.artist_members my
--- insert/update/delete solo owner del artist.artist_id = artist_members.artist_id
+create policy artist_members_select_member on public.artist_members
+for select using (user_id = auth.uid());
+
+-- insert/update/delete: solo owner del artista
 drop policy if exists artist_members_insert_owner on public.artist_members;
-create policy artist_members_insert_owner
-on public.artist_members for insert
-with check (
-  exists( insert/update/delete solo owner del artist
-    select 1 from public.artists adrop policy if exists artist_members_insert_owner on public.artist_members;
-    where a.id = artist_id
-      and a.owner_user_id = auth.uid()
+create policy artist_members_insert_owner on public.artist_members
+for insert with check (
+  exists(select 1 from public.artists a where a.id = artist_id and a.owner_user_id = auth.uid())
+);
+
+drop policy if exists artist_members_update_owner on public.artist_members;
+create policy artist_members_update_owner on public.artist_members
+for update
+using (exists(select 1 from public.artists a where a.id = artist_id and a.owner_user_id = auth.uid()))
+with check (exists(select 1 from public.artists a where a.id = artist_id and a.owner_user_id = auth.uid()));
+
+drop policy if exists artist_members_delete_owner on public.artist_members;
+create policy artist_members_delete_owner on public.artist_members
+for delete using (
+  exists(select 1 from public.artists a where a.id = artist_id and a.owner_user_id = auth.uid())
+);
+
+-- ALBUMS --------------------------------------------------
+drop policy if exists albums_select_member on public.albums;
+create policy albums_select_member on public.albums
+for select using (public.is_artist_member(artist_id));
+
+drop policy if exists albums_insert_member on public.albums;
+create policy albums_insert_member on public.albums
+for insert with check (public.is_artist_member(artist_id));
+
+drop policy if exists albums_update_member on public.albums;
+create policy albums_update_member on public.albums
+for update using (public.is_artist_member(artist_id)) with check (public.is_artist_member(artist_id));
+
+drop policy if exists albums_delete_member on public.albums;
+create policy albums_delete_member on public.albums
+for delete using (public.is_artist_member(artist_id));
+
+-- TRACKS --------------------------------------------------
+drop policy if exists tracks_select_member on public.tracks;
+create policy tracks_select_member on public.tracks
+for select using (public.is_artist_member(artist_id));
+
+drop policy if exists tracks_insert_member on public.tracks;
+create policy tracks_insert_member on public.tracks
+for insert with check (public.is_artist_member(artist_id));
+
+drop policy if exists tracks_update_member on public.tracks;
+create policy tracks_update_member on public.tracks
+for update using (public.is_artist_member(artist_id)) with check (public.is_artist_member(artist_id));
+
+drop policy if exists tracks_delete_member on public.tracks;
+create policy tracks_delete_member on public.tracks
+for delete using (public.is_artist_member(artist_id));
+
+-- TRACK_VERSIONS ------------------------------------------
+drop policy if exists versions_select_member on public.track_versions;
+create policy versions_select_member on public.track_versions
+for select using (
+  exists(select 1 from public.tracks t where t.id = track_id and public.is_artist_member(t.artist_id))
+);
+
+drop policy if exists versions_insert_member on public.track_versions;
+create policy versions_insert_member on public.track_versions
+for insert with check (
+  exists(select 1 from public.tracks t where t.id = track_id and public.is_artist_member(t.artist_id))
+);
+
+drop policy if exists versions_update_member on public.track_versions;
+create policy versions_update_member on public.track_versions
+for update
+using (exists(select 1 from public.tracks t where t.id = track_id and public.is_artist_member(t.artist_id)))
+with check (exists(select 1 from public.tracks t where t.id = track_id and public.is_artist_member(t.artist_id)));
+
+drop policy if exists versions_delete_member on public.track_versions;
+create policy versions_delete_member on public.track_versions
+for delete using (
+  exists(select 1 from public.tracks t where t.id = track_id and public.is_artist_member(t.artist_id))
+);
+
+-- STEMS ---------------------------------------------------
+drop policy if exists stems_select_member on public.stems;
+create policy stems_select_member on public.stems
+for select using (
+  exists(
+    select 1 from public.track_versions v
+    join public.tracks t on t.id = v.track_id
+    where v.id = version_id and public.is_artist_member(t.artist_id)
   )
 );
- from public.artists a
-drop policy if exists artist_members_update_owner on public.artist_members; a.id = artist_id
-create policy artist_members_update_ownerid()
-on public.artist_members for update
+
+drop policy if exists stems_insert_member on public.stems;
+create policy stems_insert_member on public.stems
+for insert with check (
+  exists(
+    select 1 from public.track_versions v
+    join public.tracks t on t.id = v.track_id
+    where v.id = version_id and public.is_artist_member(t.artist_id)
+  )
+);
+
+drop policy if exists stems_update_member on public.stems;
+create policy stems_update_member on public.stems
+for update
 using (
   exists(
-    select 1 from public.artists aop policy if exists artist_members_update_owner on public.artist_members;
-    where a.id = artist_idcreate policy artist_members_update_owner
-      and a.owner_user_id = auth.uid()
+    select 1 from public.track_versions v
+    join public.tracks t on t.id = v.track_id
+    where v.id = version_id and public.is_artist_member(t.artist_id)
   )
 )
-with check (ect 1 from public.artists a
-  exists( a.id = artist_id
-    select 1 from public.artists aid()
-    where a.id = artist_id
-      and a.owner_user_id = auth.uid()
-  )h check (
-); exists(
- from public.artists a
-drop policy if exists artist_members_delete_owner on public.artist_members; a.id = artist_id
-create policy artist_members_delete_ownerid()
-on public.artist_members for delete
-using (
-  exists(
-    select 1 from public.artists aop policy if exists artist_members_delete_owner on public.artist_members;
-    where a.id = artist_idcreate policy artist_members_delete_owner
-      and a.owner_user_id = auth.uid()
-  )
-);
-ect 1 from public.artists a
--- ALBUMS: CRUD si miembro a.id = artist_id
-drop policy if exists albums_select_member on public.albums;id()
-create policy albums_select_member
-on public.albums for select
-using (public.is_artist_member(artist_id));
- ALBUMS: CRUD si miembro
-drop policy if exists albums_insert_member on public.albums;drop policy if exists albums_select_member on public.albums;
-create policy albums_insert_membert_member
-on public.albums for insert
-with check (public.is_artist_member(artist_id));ist_id));
-
-drop policy if exists albums_update_member on public.albums;on public.albums;
-create policy albums_update_membercreate policy albums_insert_member
-on public.albums for update
-using (public.is_artist_member(artist_id))r(artist_id));
-with check (public.is_artist_member(artist_id));
-blic.albums;
-drop policy if exists albums_delete_member on public.albums;create policy albums_update_member
-create policy albums_delete_member
-on public.albums for deleteist_id))
-using (public.is_artist_member(artist_id));t_member(artist_id));
-
--- TRACKS: CRUD si miembroblic.albums;
-drop policy if exists tracks_select_member on public.tracks;create policy albums_delete_member
-create policy tracks_select_member
-on public.tracks for selectist_id));
-using (public.is_artist_member(artist_id));
-
-drop policy if exists tracks_insert_member on public.tracks;drop policy if exists tracks_select_member on public.tracks;
-create policy tracks_insert_membert_member
-on public.tracks for insert
-with check (public.is_artist_member(artist_id));ist_id));
-
-drop policy if exists tracks_update_member on public.tracks;on public.tracks;
-create policy tracks_update_membercreate policy tracks_insert_member
-on public.tracks for update
-using (public.is_artist_member(artist_id))r(artist_id));
-with check (public.is_artist_member(artist_id));
-blic.tracks;
-drop policy if exists tracks_delete_member on public.tracks;create policy tracks_update_member
-create policy tracks_delete_member
-on public.tracks for deleteist_id))
-using (public.is_artist_member(artist_id));t_member(artist_id));
-
--- TRACK_VERSIONS: hereda por track -> artist (CRUD)blic.tracks;
-drop policy if exists versions_select_member on public.track_versions;create policy tracks_delete_member
-create policy versions_select_member
-on public.track_versions for selectist_id));
-using (
-  exists(st (CRUD)
-    select 1drop policy if exists versions_select_member on public.track_versions;
-    from public.tracks t
-    where t.id = track_id
-      and public.is_artist_member(t.artist_id)
-  )
-);ect 1
-public.tracks t
-drop policy if exists versions_insert_member on public.track_versions;id = track_id
-create policy versions_insert_memberst_member(t.artist_id)
-on public.track_versions for insert
 with check (
   exists(
-    select 1op policy if exists versions_insert_member on public.track_versions;
-    from public.tracks tcreate policy versions_insert_member
-    where t.id = track_id
-      and public.is_artist_member(t.artist_id)
+    select 1 from public.track_versions v
+    join public.tracks t on t.id = v.track_id
+    where v.id = version_id and public.is_artist_member(t.artist_id)
   )
 );
-public.tracks t
-drop policy if exists versions_update_member on public.track_versions;id = track_id
-create policy versions_update_memberst_member(t.artist_id)
-on public.track_versions for update
-using (
-  exists(
-    select 1op policy if exists versions_update_member on public.track_versions;
-    from public.tracks tcreate policy versions_update_member
-    where t.id = track_id
-      and public.is_artist_member(t.artist_id)
-  )
-)ect 1
-with check (public.tracks t
-  exists(id = track_id
-    select 1st_member(t.artist_id)
-    from public.tracks t
-    where t.id = track_id
-      and public.is_artist_member(t.artist_id)h check (
-  ) exists(
-);
-public.tracks t
-drop policy if exists versions_delete_member on public.track_versions;id = track_id
-create policy versions_delete_memberst_member(t.artist_id)
-on public.track_versions for delete
-using (
-  exists(
-    select 1op policy if exists versions_delete_member on public.track_versions;
-    from public.tracks tcreate policy versions_delete_member
-    where t.id = track_id
-      and public.is_artist_member(t.artist_id)
-  )
-);ect 1
-public.tracks t
--- STEMS: hereda por version -> track -> artist (CRUD)id = track_id
-drop policy if exists stems_select_member on public.stems;st_member(t.artist_id)
-create policy stems_select_member
-on public.stems for select
-using (
-  exists( STEMS: hereda por version -> track -> artist (CRUD)
-    select 1drop policy if exists stems_select_member on public.stems;
-    from public.track_versions v
-    join public.tracks t on t.id = v.track_id
-    where v.id = version_id
-      and public.is_artist_member(t.artist_id)
-  )ect 1
-);public.track_versions v
-lic.tracks t on t.id = v.track_id
-drop policy if exists stems_insert_member on public.stems;
-create policy stems_insert_member)
-on public.stems for insert
-with check (
-  exists(
-    select 1op policy if exists stems_insert_member on public.stems;
-    from public.track_versions vcreate policy stems_insert_member
-    join public.tracks t on t.id = v.track_id
-    where v.id = version_id
-      and public.is_artist_member(t.artist_id)
-  )
-);public.track_versions v
-lic.tracks t on t.id = v.track_id
-drop policy if exists stems_update_member on public.stems;
-create policy stems_update_member)
-on public.stems for update
-using (
-  exists(
-    select 1op policy if exists stems_update_member on public.stems;
-    from public.track_versions vcreate policy stems_update_member
-    join public.tracks t on t.id = v.track_id
-    where v.id = version_id
-      and public.is_artist_member(t.artist_id)
-  )ect 1
-)public.track_versions v
-with check (lic.tracks t on t.id = v.track_id
-  exists(
-    select 1)
-    from public.track_versions v
-    join public.tracks t on t.id = v.track_id
-    where v.id = version_idh check (
-      and public.is_artist_member(t.artist_id) exists(
-  )
-);public.track_versions v
-lic.tracks t on t.id = v.track_id
+
 drop policy if exists stems_delete_member on public.stems;
-create policy stems_delete_member)
-on public.stems for delete
-using (
+create policy stems_delete_member on public.stems
+for delete using (
   exists(
-    select 1op policy if exists stems_delete_member on public.stems;
-    from public.track_versions vcreate policy stems_delete_member
+    select 1 from public.track_versions v
     join public.tracks t on t.id = v.track_id
-    where v.id = version_id
-      and public.is_artist_member(t.artist_id)
-  )ect 1
-);public.track_versions v
-lic.tracks t on t.id = v.track_id
--- COVER_ASSETS: select/insert/delete si miembro (update rara vez hace falta)
-drop policy if exists cover_assets_select_member on public.cover_assets;)
-create policy cover_assets_select_member
-on public.cover_assets for select
-using (public.is_artist_member(artist_id));
- COVER_ASSETS: select/insert/delete si miembro (update rara vez hace falta)
-drop policy if exists cover_assets_insert_member on public.cover_assets;drop policy if exists cover_assets_select_member on public.cover_assets;
-create policy cover_assets_insert_member
-on public.cover_assets for insert
-with check (public.is_artist_member(artist_id));));
+    where v.id = version_id and public.is_artist_member(t.artist_id)
+  )
+);
 
-drop policy if exists cover_assets_delete_member on public.cover_assets;ember on public.cover_assets;
-create policy cover_assets_delete_membercreate policy cover_assets_insert_member
-on public.cover_assets for delete
-using (public.is_artist_member(artist_id));st_id));
+-- COVER_ASSETS --------------------------------------------
+drop policy if exists cover_assets_select_member on public.cover_assets;
+create policy cover_assets_select_member on public.cover_assets
+for select using (public.is_artist_member(artist_id));
 
--- SHARE_LINKS: solo creador (CRUD) on public.cover_assets;
-drop policy if exists share_links_select_creator on public.share_links;create policy cover_assets_delete_member
-create policy share_links_select_creator
-on public.share_links for select));
-using (created_by = auth.uid());
+drop policy if exists cover_assets_insert_member on public.cover_assets;
+create policy cover_assets_insert_member on public.cover_assets
+for insert with check (public.is_artist_member(artist_id));
 
--- ELIMINADO: share_links_select_by_tokendrop policy if exists share_links_select_creator on public.share_links;
--- La validación de tokens debe hacerse desde Edge Functions con service_role,eator
--- no desde el cliente. Una policy anónima expondría todos los links no expirados.
+drop policy if exists cover_assets_delete_member on public.cover_assets;
+create policy cover_assets_delete_member on public.cover_assets
+for delete using (public.is_artist_member(artist_id));
+
+-- SHARE_LINKS ---------------------------------------------
+drop policy if exists share_links_select_creator on public.share_links;
+create policy share_links_select_creator on public.share_links
+for select using (created_by = auth.uid());
 
 drop policy if exists share_links_select_by_token on public.share_links;
-_by_token
-drop policy if exists share_links_insert_creator on public.share_links;-- La validación de tokens debe hacerse desde Edge Functions con service_role,
-create policy share_links_insert_creatora expondría todos los links no expirados.
-on public.share_links for insert
-with check (created_by = auth.uid());
+-- Token validation should be done from Edge Functions with service_role
+
+drop policy if exists share_links_insert_creator on public.share_links;
+create policy share_links_insert_creator on public.share_links
+for insert with check (created_by = auth.uid());
 
 drop policy if exists share_links_update_creator on public.share_links;
-create policy share_links_update_creatorcreate policy share_links_insert_creator
-on public.share_links for update
-using (created_by = auth.uid())
-with check (created_by = auth.uid());
-ate_creator on public.share_links;
-drop policy if exists share_links_delete_creator on public.share_links;create policy share_links_update_creator
-create policy share_links_delete_creator
-on public.share_links for delete
-using (created_by = auth.uid());d());
+create policy share_links_update_creator on public.share_links
+for update using (created_by = auth.uid()) with check (created_by = auth.uid());
 
--- DOWNLOAD_EVENTS:ete_creator on public.share_links;
--- normalmente se insertan desde Edge Function (service role),create policy share_links_delete_creator
--- pero si quieres permitir insert autenticado (para analytics internos):
+drop policy if exists share_links_delete_creator on public.share_links;
+create policy share_links_delete_creator on public.share_links
+for delete using (created_by = auth.uid());
+
+-- DOWNLOAD_EVENTS -----------------------------------------
 drop policy if exists download_events_insert_auth on public.download_events;
-create policy download_events_insert_auth
-on public.download_events for insert
-with check (auth.uid() is not null);-- normalmente se insertan desde Edge Function (service role),
-permitir insert autenticado (para analytics internos):
--- select solo creador del link (si quieres ver stats)wnload_events;
+create policy download_events_insert_auth on public.download_events
+for insert with check (auth.uid() is not null);
+
 drop policy if exists download_events_select_creator on public.download_events;
-create policy download_events_select_creator
-on public.download_events for select
-using (
-  exists(quieres ver stats)
-    select 1drop policy if exists download_events_select_creator on public.download_events;
-    from public.share_links s
-    where s.id = share_link_id
-      and s.created_by = auth.uid()
-  )
-);ect 1
-public.share_links s
--- Función SECURITY DEFINER para listar miembros con datos de perfil
+create policy download_events_select_creator on public.download_events
+for select using (
+  exists(select 1 from public.share_links s where s.id = share_link_id and s.created_by = auth.uid())
+);
+
+-- ARTIST_INVITES ------------------------------------------
+drop policy if exists invites_select_owner on public.artist_invites;
+create policy invites_select_owner on public.artist_invites
+for select using (created_by = auth.uid());
+
+drop policy if exists invites_insert_owner on public.artist_invites;
+create policy invites_insert_owner on public.artist_invites
+for insert with check (created_by = auth.uid());
+
+drop policy if exists invites_delete_owner on public.artist_invites;
+create policy invites_delete_owner on public.artist_invites
+for delete using (created_by = auth.uid());
+
+-- Cualquier usuario autenticado puede leer un invite por token (para aceptarlo)
+drop policy if exists invites_select_by_token on public.artist_invites;
+create policy invites_select_by_token on public.artist_invites
+for select using (auth.uid() is not null);
+
+-- El invitado puede marcar el invite como usado
+drop policy if exists invites_update_accept on public.artist_invites;
+create policy invites_update_accept on public.artist_invites
+for update using (auth.uid() is not null) with check (used_by = auth.uid());
+
+-- =========================================================
+-- RPC FUNCTIONS
+-- =========================================================
+
+-- Listar miembros con datos de perfil (SECURITY DEFINER)
 create or replace function public.get_artist_member_profiles(aid uuid)
 returns table(user_id uuid, role text, created_at timestamptz, display_name text, avatar_path text)
-language sql
-security definer
-stable
-set search_path = public
-as $$
-  select
-    m.user_id,
-    m.role,
-    m.created_at,
-    p.display_name,
-    p.avatar_path
+language sql security definer stable set search_path = public as $$
+  select m.user_id, m.role, m.created_at, p.display_name, p.avatar_path
   from public.artist_members m
   left join public.profiles p on p.user_id = m.user_id
   where m.artist_id = aid
-    and exists(
-      select 1 from public.artist_members my
-      where my.artist_id = aid
-        and my.user_id = auth.uid()
-    );
+    and exists(select 1 from public.artist_members my where my.artist_id = aid and my.user_id = auth.uid());
 $$;
 
--- Función SECURITY DEFINER para listar miembros sin recursiónid = share_link_id
-create or replace function public.get_artist_members(aid uuid).uid()
+-- Listar miembros sin datos de perfil (SECURITY DEFINER)
+create or replace function public.get_artist_members(aid uuid)
 returns table(user_id uuid, role text, created_at timestamptz)
-language sql
-security definer
-stable Función SECURITY DEFINER para listar miembros sin recursión
-set search_path = publiccreate or replace function public.get_artist_members(aid uuid)
-as $$
+language sql security definer stable set search_path = public as $$
   select m.user_id, m.role, m.created_at
   from public.artist_members m
   where m.artist_id = aid
-    and exists(= public
-      select 1 from public.artist_members my
-      where my.artist_id = aidle, m.created_at
-        and my.user_id = auth.uid()m public.artist_members m
-    );
+    and exists(select 1 from public.artist_members my where my.artist_id = aid and my.user_id = auth.uid());
 $$;
-d()
--- Función para crear invite sin problemas de RLSexists(
-create or replace function public.create_artist_invite(.artists a
-  p_artist_id uuid,id = aid and a.owner_user_id = auth.uid()
-  p_role text
-)
+
+-- Crear invite (solo owner)
+create or replace function public.create_artist_invite(p_artist_id uuid, p_role text)
 returns table(id uuid, token text, role text, expires_at timestamptz, used_at timestamptz)
-language plpgsql
-security definerFunción para crear invite sin problemas de RLS
-set search_path = publiccreate or replace function public.create_artist_invite(
-as $$
+language plpgsql security definer set search_path = public as $$
 declare
   v_user_id uuid := auth.uid();
-begin(id uuid, token text, role text, expires_at timestamptz, used_at timestamptz)
-  -- Verificar que el usuario es owneranguage plpgsql
-  if not exists(
-    select 1 from public.artists a= public
-    where a.id = p_artist_id and a.owner_user_id = v_user_id
-  ) then
-    raise exception 'Not authorized';ser_id uuid := auth.uid();
+begin
+  if not exists(select 1 from public.artists a where a.id = p_artist_id and a.owner_user_id = v_user_id) then
+    raise exception 'Not authorized';
   end if;
-s owner
-  return querynot exists(
+  return query
   insert into public.artist_invites (artist_id, created_by, role)
-  values (p_artist_id, v_user_id, p_role) p_artist_id and a.owner_user_id = v_user_id
+  values (p_artist_id, v_user_id, p_role)
   returning
     public.artist_invites.id,
-    public.artist_invites.token,;
+    public.artist_invites.token,
     public.artist_invites.role,
-    public.artist_invites.expires_at,query
-    public.artist_invites.used_at;  insert into public.artist_invites (artist_id, created_by, role)
-end;tist_id, v_user_id, p_role)
+    public.artist_invites.expires_at,
+    public.artist_invites.used_at;
+end;
 $$;
 
--- Función pública para leer info de un invite por token (no requiere auth)artist_invites.token,
-create or replace function public.get_invite_info(p_token text)e,
-returns table(artist_name text, role text, valid boolean, reason text, artist_avatar_path text)s_at,
-language plpgsqlat;
-security definer
-set search_path = public
-as $$
-declareFunción pública para leer info de un invite por token (no requiere auth)
-  v_invite public.artist_invites;create or replace function public.get_invite_info(p_token text)
-  v_artist public.artists;st_avatar_path text)
+-- Info de invite por token (no requiere auth)
+create or replace function public.get_invite_info(p_token text)
+returns table(artist_name text, role text, valid boolean, reason text, artist_avatar_path text)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_invite public.artist_invites;
+  v_artist public.artists;
 begin
-  select * into v_invite
-  from public.artist_invites= public
-  where token = p_token;
-
-  if not found thennvite public.artist_invites;
-    return query select ''::text, ''::text, false, 'invalid'::text, ''::text;ist public.artists;
+  select * into v_invite from public.artist_invites where token = p_token;
+  if not found then
+    return query select ''::text, ''::text, false, 'invalid'::text, ''::text;
     return;
   end if;
-m public.artist_invites
   if v_invite.used_at is not null then
     return query select ''::text, ''::text, false, 'used'::text, ''::text;
     return;
-  end if;    return query select ''::text, ''::text, false, 'invalid'::text, ''::text;
-
+  end if;
   if v_invite.expires_at < now() then
     return query select ''::text, ''::text, false, 'expired'::text, ''::text;
-    return;vite.used_at is not null then
-  end if;    return query select ''::text, ''::text, false, 'used'::text, ''::text;
-
+    return;
+  end if;
   select * into v_artist from public.artists where id = v_invite.artist_id;
-
-  return query select v_artist.name, v_invite.role, true, 'ok'::text, coalesce(v_artist.avatar_path, '')::text;vite.expires_at < now() then
-end;    return query select ''::text, ''::text, false, 'expired'::text, ''::text;
+  return query select v_artist.name, v_invite.role, true, 'ok'::text, coalesce(v_artist.avatar_path, '')::text;
+end;
 $$;
 
--- Función para listar invites de un artista (solo owner)
-create or replace function public.get_artist_invites(p_artist_id uuid)* into v_artist from public.artists where id = v_invite.artist_id;
+-- Listar invites de un artista (solo owner)
+create or replace function public.get_artist_invites(p_artist_id uuid)
 returns table(id uuid, token text, role text, expires_at timestamptz, used_at timestamptz)
-language plpgsqlsce(v_artist.avatar_path, '')::text;
-security definerend;
-set search_path = public
-as $$
-beginFunción para listar invites de un artista (solo owner)
-  if not exists(create or replace function public.get_artist_invites(p_artist_id uuid)
-    select 1 from public.artists atimestamptz, used_at timestamptz)
-    where a.id = p_artist_id and a.owner_user_id = auth.uid()
-  ) then
-    return;= public
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from public.artists a where a.id = p_artist_id and a.owner_user_id = auth.uid()) then
+    return;
   end if;
-
-  return querynot exists(
-  select i.id, i.token, i.role, i.expires_at, i.used_atelect 1 from public.artists a
-  from public.artist_invites i p_artist_id and a.owner_user_id = auth.uid()
+  return query
+  select i.id, i.token, i.role, i.expires_at, i.used_at
+  from public.artist_invites i
   where i.artist_id = p_artist_id
   order by i.created_at desc;
-end;;
+end;
 $$;
-query
--- =========================================================  select i.id, i.token, i.role, i.expires_at, i.used_at
--- ACCEPT ARTIST INVITE (SECURITY DEFINER)artist_invites i
+
+-- =========================================================
+-- ACCEPT ARTIST INVITE (SECURITY DEFINER)
 -- =========================================================
 drop function if exists public.accept_artist_invite(text);
 drop function if exists public.accept_artist_invite(text, text);
 drop function if exists public.accept_artist_invite(text, text, text);
 
-create function public.accept_artist_invite(=========================================================
-  p_token text,-- ACCEPT ARTIST INVITE (SECURITY DEFINER)
+create function public.accept_artist_invite(
+  p_token text,
   p_display_name text default null,
-  p_avatar_path text default nullst_invite(text);
-)xt);
-returns texttext, text);
-language plpgsql
-security definer
-set search_path = public  p_token text,
-as $$
-declare text default null
+  p_avatar_path text default null
+)
+returns text language plpgsql security definer set search_path = public as $$
+declare
   v_user_id uuid := auth.uid();
   v_invite public.artist_invites;
-beginanguage plpgsql
-  if v_user_id is null theniner
-    return 'not_authenticated';= public
-  end if;
+begin
+  if v_user_id is null then return 'not_authenticated'; end if;
 
-  select * into v_inviteser_id uuid := auth.uid();
-  from public.artist_invitesite public.artist_invites;
-  where token = p_token;
+  select * into v_invite from public.artist_invites where token = p_token;
+  if not found then return 'invalid'; end if;
+  if v_invite.used_at is not null then return 'used'; end if;
+  if v_invite.expires_at < now() then return 'expired'; end if;
 
-  if not found theneturn 'not_authenticated';
-    return 'invalid';
-  end if;
-* into v_invite
-  if v_invite.used_at is not null then  from public.artist_invites
-    return 'used';
-  end if;
-
-  if v_invite.expires_at < now() then    return 'invalid';
-    return 'expired';
-  end if;
-vite.used_at is not null then
-  insert into public.profiles (user_id, display_name, avatar_path, onboarding_completed)    return 'used';
+  -- Upsert profile
+  insert into public.profiles (user_id, display_name, avatar_path, onboarding_completed)
   values (v_user_id, coalesce(nullif(p_display_name, ''), 'Usuario'), nullif(p_avatar_path, ''), true)
   on conflict (user_id) do update set
-    onboarding_completed = true,vite.expires_at < now() then
-    display_name = coalesce(nullif(excluded.display_name, 'Usuario'), nullif(profiles.display_name, ''), excluded.display_name),    return 'expired';
+    onboarding_completed = true,
+    display_name = coalesce(nullif(excluded.display_name, 'Usuario'), nullif(profiles.display_name, ''), excluded.display_name),
     avatar_path = coalesce(nullif(excluded.avatar_path, ''), profiles.avatar_path);
 
-  insert into public.artist_members (artist_id, user_id, role)into public.profiles (user_id, display_name, avatar_path, onboarding_completed)
-  values (v_invite.artist_id, v_user_id, v_invite.role)  values (v_user_id, coalesce(nullif(p_display_name, ''), 'Usuario'), nullif(p_avatar_path, ''), true)
+  -- Add as member
+  insert into public.artist_members (artist_id, user_id, role)
+  values (v_invite.artist_id, v_user_id, v_invite.role)
   on conflict (artist_id, user_id) do nothing;
 
-  update public.artist_invitescluded.display_name, 'Usuario'), nullif(profiles.display_name, ''), excluded.display_name),
-  set used_by = v_user_id, used_at = now()f(excluded.avatar_path, ''), profiles.avatar_path);
+  -- Mark invite as used
+  update public.artist_invites
+  set used_by = v_user_id, used_at = now()
   where id = v_invite.id;
 
-  return 'ok';  values (v_invite.artist_id, v_user_id, v_invite.role)
+  return 'ok';
+end;
+$$;
+
+-- Cambiar rol de un miembro (solo owner)
+create or replace function public.set_artist_member_role(
+  p_artist_id uuid,
+  p_user_id uuid,
+  p_role text
+)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from public.artists a where a.id = p_artist_id and a.owner_user_id = auth.uid()) then
+    raise exception 'Not authorized';
+  end if;
+  if p_user_id = (select owner_user_id from public.artists where id = p_artist_id) then
+    raise exception 'Cannot change owner role';
+  end if;
+  if p_role not in ('editor', 'viewer') then
+    raise exception 'Invalid role';
+  end if;
+  update public.artist_members
+  set role = p_role
+  where artist_id = p_artist_id and user_id = p_user_id;
 end;
 $$;

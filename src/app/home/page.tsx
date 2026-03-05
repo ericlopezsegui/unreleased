@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
@@ -136,31 +137,25 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
   const isOwner = members.find(m => m.user_id === currentUserId)?.role === 'owner'
 
-  const copyLink = (token: string) => {
-    const text = `${origin}/invite/${token}`
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(() => {
-        setCopied(token)
-        setTimeout(() => setCopied(null), 2000)
-      }).catch(() => fallbackCopy(token, text))
-    } else {
-      fallbackCopy(token, text)
-    }
+  const changeMemberRole = async (userId: string, role: 'editor' | 'viewer') => {
+    const { error } = await supabase.rpc('set_artist_member_role', {
+      p_artist_id: artist.id, p_user_id: userId, p_role: role,
+    })
+    if (!error) setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role } : m))
   }
 
-  const fallbackCopy = (token: string, text: string) => {
+  const copyCode = (code: string) => {
+    const apply = (c: string) => { setCopied(c); setTimeout(() => setCopied(null), 2000) }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(code).then(() => apply(code)).catch(() => fallback(code))
+    } else { fallback(code) }
+  }
+
+  const fallback = (code: string) => {
     const el = document.createElement('textarea')
-    el.value = text
-    el.style.position = 'fixed'
-    el.style.opacity = '0'
-    document.body.appendChild(el)
-    el.focus()
-    el.select()
-    try {
-      document.execCommand('copy')
-      setCopied(token)
-      setTimeout(() => setCopied(null), 2000)
-    } catch {}
+    el.value = code; el.style.position = 'fixed'; el.style.opacity = '0'
+    document.body.appendChild(el); el.focus(); el.select()
+    try { document.execCommand('copy'); setCopied(code); setTimeout(() => setCopied(null), 2000) } catch {}
     document.body.removeChild(el)
   }
 
@@ -176,14 +171,15 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
   const panelStyle: React.CSSProperties = {
     width: '100%', maxWidth: 560, background: '#fafafa',
-    borderTop: '1px solid #eee', padding: '28px 24px 48px',
+    borderTop: '1px solid #eee', padding: '28px 24px calc(80px + env(safe-area-inset-bottom, 0px))',
     maxHeight: '85dvh', overflowY: 'auto', fontFamily: 'Outfit, sans-serif',
     transform: visible && !closing ? 'translateY(0)' : 'translateY(100%)',
     opacity: visible && !closing ? 1 : 0,
     transition: 'transform .34s cubic-bezier(0.32, 0.72, 0, 1), opacity .28s ease',
   }
 
-  return (
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <div onClick={handleClose} style={overlayStyle}>
       <div onClick={e => e.stopPropagation()} style={panelStyle}>
 
@@ -199,32 +195,41 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
         <div style={{ marginBottom: 28 }}>
           <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Miembros</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
             {members.map(m => {
               const initial = (m.display_name ?? '?')[0].toUpperCase()
               return (
-                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.03)', animation: 'fadeUp .3s ease both' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.03)', animation: 'fadeUp .3s ease both', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, fontWeight: 600, color: '#999' }}>
                       {m.avatar_url
                         ? <img src={m.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                         : initial}
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: '#0f0f0f', lineHeight: 1.2 }}>{m.display_name ?? 'Usuario'}</span>
-                      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: m.role === 'owner' ? '#888' : '#c0c0c0' }}>{m.role === 'owner' ? 'Propietario' : m.role === 'editor' ? 'Editor' : 'Solo lectura'}</span>
-                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: '#0f0f0f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name ?? 'Usuario'}</span>
                   </div>
-                  {isOwner && m.role !== 'owner' && (
-                    <button
-                      onClick={() => removeMember(m.user_id)}
-                      title="Eliminar miembro"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 4, borderRadius: 4, transition: 'color .15s, background .15s' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = '#e53e3e'; e.currentTarget.style.background = 'rgba(229,62,62,0.06)' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = '#ddd'; e.currentTarget.style.background = 'none' }}>
-                      <Ic n="close" s={14} />
-                    </button>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                    {isOwner && m.role !== 'owner' ? (
+                      <>
+                        {(['editor', 'viewer'] as const).map(r => (
+                          <button key={r} onClick={() => changeMemberRole(m.user_id, r)}
+                            style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', border: '1px solid', borderColor: m.role === r ? '#0f0f0f' : '#eee', background: m.role === r ? '#0f0f0f' : 'transparent', color: m.role === r ? '#fff' : '#bbb', cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s', borderRadius: 3 }}>
+                            {r === 'editor' ? 'Editor' : 'Lectura'}
+                          </button>
+                        ))}
+                        <button onClick={() => removeMember(m.user_id)} title="Eliminar"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 4, borderRadius: 4, transition: 'color .15s' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#e53e3e' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = '#ddd' }}>
+                          <Ic n="close" s={14} />
+                        </button>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: m.role === 'owner' ? '#888' : '#c0c0c0' }}>
+                        {m.role === 'owner' ? 'Owner' : m.role === 'editor' ? 'Editor' : 'Lectura'}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )
             })}
@@ -234,31 +239,31 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
         <div style={{ marginBottom: 24 }}>
           <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Invitaciones activas</p>
           {activeInvites.length === 0 ? (
-            <p style={{ fontSize: 12, color: '#ddd', padding: '16px 0' }}>No hay invitaciones activas</p>
+            <p style={{ fontSize: 12, color: '#ddd', padding: '16px 0' }}>No hay códigos activos</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {activeInvites.map(inv => (
-                <div key={inv.id} style={{ padding: '14px 14px', background: '#fff', border: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div key={inv.id} style={{ background: '#fff', border: '1px solid #f0f0f0', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: inv.role === 'editor' ? '#0f0f0f' : '#999', padding: '3px 7px', border: '1px solid', borderColor: inv.role === 'editor' ? '#0f0f0f' : '#eee' }}>
                         {inv.role === 'editor' ? 'Editor' : 'Solo lectura'}
                       </span>
                       <span style={{ fontSize: 11, color: '#ccc' }}>· expira {new Date(inv.expires_at).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
                     </div>
-                    <button onClick={() => deleteInvite(inv.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 2, transition: 'color .15s' }}
+                    <button onClick={() => deleteInvite(inv.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 4, transition: 'color .15s' }}
                       onMouseEnter={e => (e.currentTarget.style.color = '#999')}
                       onMouseLeave={e => (e.currentTarget.style.color = '#ddd')}>
                       <Ic n="close" s={13} />
                     </button>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#fafafa', border: '1px solid #f5f5f5' }}>
-                    <span style={{ flex: 1, fontSize: 11, color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', letterSpacing: '0.01em' }}>
-                      {origin}/invite/{inv.token}
-                    </span>
-                    <button onClick={() => copyLink(inv.token)}
-                      style={{ background: copied === inv.token ? '#0f0f0f' : 'none', border: '1px solid', borderColor: copied === inv.token ? '#0f0f0f' : '#eee', cursor: 'pointer', padding: '5px 10px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: copied === inv.token ? '#fff' : '#999', fontFamily: 'inherit', transition: 'all .15s', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                      {copied === inv.token ? '✓ Copiado' : 'Copiar'}
+                  <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, margin: '12px 14px 14px' }}>
+                    <div style={{ flex: 1, background: '#f8f8f8', border: '1px solid #f0f0f0', padding: '14px', textAlign: 'center', borderRadius: '2px 0 0 2px' }}>
+                      <span style={{ fontSize: 24, fontWeight: 700, letterSpacing: '0.28em', fontFamily: 'monospace', color: '#0f0f0f' }}>{inv.token}</span>
+                    </div>
+                    <button onClick={() => copyCode(inv.token)}
+                      style={{ padding: '0 16px', background: copied === inv.token ? '#0f0f0f' : '#fff', border: '1px solid', borderLeft: 'none', borderColor: copied === inv.token ? '#0f0f0f' : '#f0f0f0', cursor: 'pointer', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: copied === inv.token ? '#fff' : '#999', fontFamily: 'inherit', transition: 'all .15s', flexShrink: 0, borderRadius: '0 2px 2px 0', minWidth: 64 }}>
+                      {copied === inv.token ? '✓' : 'Copiar'}
                     </button>
                   </div>
                 </div>
@@ -268,7 +273,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
         </div>
 
         <div>
-          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 10px' }}>Crear enlace de invitación</p>
+          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 10px' }}>Generar código de invitación</p>
           <div style={{ display: 'flex', gap: 6 }}>
             <button onClick={() => createInvite('editor')} disabled={creating !== null}
               style={{ flex: 1, padding: '11px 16px', background: '#0f0f0f', color: '#fff', border: 'none', cursor: creating !== null ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 500, fontFamily: 'inherit', opacity: creating !== null ? 0.5 : 1, transition: 'opacity .15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
@@ -282,10 +287,11 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
             </button>
           </div>
           {inviteError && <p style={{ fontSize: 11, color: '#e05', marginTop: 8 }}>{inviteError}</p>}
-          {!inviteError && <p style={{ fontSize: 11, color: '#ccc', marginTop: 8 }}>Los enlaces caducan en 7 días y son de un solo uso.</p>}
+          {!inviteError && <p style={{ fontSize: 11, color: '#ccc', marginTop: 8 }}>Los códigos caducan en 7 días y son de un solo uso.</p>}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -299,6 +305,7 @@ export default function HomePage() {
   const [showTeam, setShowTeam] = useState(false)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null)
+  const [teamMembers, setTeamMembers] = useState<Member[]>([])
   const [albumCount, setAlbumCount] = useState(0)
   const [trackCount, setTrackCount] = useState(0)
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
@@ -347,10 +354,24 @@ export default function HomePage() {
         if (data?.signedUrl) setProfileAvatarUrl(data.signedUrl)
       }
       if (a) {
-        const [albRes, trRes] = await Promise.all([
+        const [albRes, trRes, mRes] = await Promise.all([
           supabase.from('albums').select('id,title,cover_path,updated_at').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
           supabase.from('tracks').select('id,title,updated_at,cover_path,album_id,albums(title,cover_path)').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
+          supabase.rpc('get_artist_member_profiles', { aid: a.id }),
         ])
+        // Load team member avatars
+        const memberData = (mRes.data ?? []) as { user_id: string; role: string; display_name: string | null; avatar_path: string | null }[]
+        const membersWithAvatars: Member[] = await Promise.all(
+          memberData.map(async m => {
+            let avatar_url: string | null = null
+            if (m.avatar_path) {
+              const { data: su } = await supabase.storage.from('avatars').createSignedUrl(m.avatar_path, 3600)
+              avatar_url = su?.signedUrl ?? null
+            }
+            return { user_id: m.user_id, role: m.role, display_name: m.display_name ?? null, avatar_url }
+          })
+        )
+        setTeamMembers(membersWithAvatars)
         setAlbumCount(albRes.data?.length ?? 0)
         setTrackCount(trRes.data?.length ?? 0)
         const items: RecentItem[] = [
@@ -379,9 +400,7 @@ export default function HomePage() {
   useEffect(() => {
     setRightActions(
       <>
-        <button className="ghost-btn" onClick={() => setShowQR(true)}><Ic n="qr" s={15} /></button>
-        <button className="ghost-btn" onClick={() => {}}><Ic n="set" s={15} /></button>
-        <button className="ghost-btn" onClick={signOut}><Ic n="logout" s={15} /></button>
+        <button className="ghost-btn" onClick={() => setShowQR(true)}><Ic n="qr" s={16} /></button>
       </>
     )
     return () => { setRightActions(null); setMiniInfo(null) }
@@ -417,7 +436,6 @@ export default function HomePage() {
   return (
     <div className="page">
       <style>{styles}</style>
-      {showQR && <QRModal url={typeof window !== 'undefined' ? window.location.origin : ''} onClose={() => setShowQR(false)} />}
       {showTeam && artist && <TeamModal artist={artist} currentUserId={userId ?? ''} onClose={() => setShowTeam(false)} />}
       {/* ── Hero ── */}
       <section className="hero" ref={heroRef}>
@@ -431,36 +449,33 @@ export default function HomePage() {
         <h1 className="artist-name">{artist?.name ?? 'Tu espacio'}</h1>
         {artist?.handle && <p className="handle">@{artist.handle}</p>}
         {artist?.bio && <p className="bio">{artist.bio}</p>}
-        <div className="stats">
-          <div className="stat">
-            <span className="stat-n">{trackCount}</span>
-            <span className="stat-l">tracks</span>
-          </div>
-          <div className="stat-sep" />
-          <div className="stat">
-            <span className="stat-n">{albumCount}</span>
-            <span className="stat-l">álbumes</span>
-          </div>
-        </div>
       </section>
 
-      {/* ── Quick actions ── */}
-      <section className="actions-section">
-        <p className="section-label">Acciones</p>
-        <div className="actions-row">
-          {([
-            { n: 'upload', l: 'Subir track',  action: () => router.push(`/tracks/new?artist=${artist?.id ?? ''}`) },
-            { n: 'disc',   l: 'Álbumes',      action: () => router.push('/albums') },
-            { n: 'music',  l: 'Tracks',       action: () => router.push('/tracks') },
-            { n: 'users',  l: 'Equipo',       action: () => setShowTeam(true) },
-          ] as const).map(a => (
-            <button key={a.n} className="action-pill" onClick={a.action}>
-              <span className="action-pill-icon"><Ic n={a.n} s={15} c="currentColor" /></span>
-              <span>{a.l}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+      {/* ── Team strip ── */}
+      {artist && teamMembers.length > 0 && (
+        <section className="team-strip" onClick={() => setShowTeam(true)}>
+          <div className="team-avatars">
+            {teamMembers.slice(0, 3).map((m, i) => {
+              const initial = (m.display_name ?? '?')[0].toUpperCase()
+              return (
+                <div key={m.user_id} className="team-avatar-circle" style={{ zIndex: 3 - i, marginLeft: i > 0 ? -10 : 0 }}>
+                  {m.avatar_url
+                    ? <img src={m.avatar_url} alt="" className="team-avatar-img" />
+                    : <span className="team-avatar-ph">{initial}</span>
+                  }
+                </div>
+              )
+            })}
+            <div className="team-plus-btn" style={{ marginLeft: -6 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </div>
+          </div>
+          <span className="team-label">{teamMembers.length} miembro{teamMembers.length !== 1 ? 's' : ''}</span>
+          <Ic n="arrow" s={14} c="#bbb" />
+        </section>
+      )}
 
       {/* ── Recent ── */}
       <section className="recent-section">
@@ -573,7 +588,7 @@ const styles = `
   body { margin: 0; background: #fafafa; }
   ::selection { background: rgba(15,15,15,0.06); }
 
-  .page { position: relative; min-height: 100dvh; font-family: 'Outfit', -apple-system, system-ui, sans-serif; background: transparent; overflow-x: hidden; padding-top: 52px; padding-bottom: 80px; }
+  .page { position: relative; min-height: 100dvh; font-family: 'Outfit', -apple-system, system-ui, sans-serif; background: transparent; overflow-x: hidden; padding-top: 56px; padding-bottom: 140px; }
 
 
 
@@ -582,37 +597,56 @@ const styles = `
   .hero-img-wrap { position: relative; width: 140px; height: 140px; margin-bottom: 28px; flex-shrink: 0; }
   .hero-img { width: 100%; height: 100%; object-fit: cover; display: block; position: relative; z-index: 1; }
   .hero-img-shadow { position: absolute; inset: 8px; z-index: 0; filter: blur(28px) saturate(1.6); opacity: 0.3; background-size: cover; background-position: center; }
-  .greet { font-size: 12px; color: #b0b0b0; font-weight: 400; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .greet { font-size: 12px; color: #888; font-weight: 400; letter-spacing: 0.04em; margin-bottom: 8px; }
   .artist-name { font-size: clamp(28px, 7vw, 40px); font-weight: 200; letter-spacing: -0.035em; color: #0f0f0f; line-height: 1.08; margin-bottom: 2px; }
-  .handle { font-size: 12px; color: #c0c0c0; margin-bottom: 6px; letter-spacing: 0.01em; }
-  .bio { font-size: 13px; color: #a0a0a0; line-height: 1.6; max-width: 360px; margin-bottom: 0; font-weight: 300; }
+  .handle { font-size: 12px; color: #999; margin-bottom: 6px; letter-spacing: 0.01em; }
+  .bio { font-size: 13px; color: #777; line-height: 1.6; max-width: 360px; margin-bottom: 0; font-weight: 300; }
   .stats { display: flex; align-items: center; gap: 20px; margin-top: 24px; }
   .stat { display: flex; align-items: baseline; gap: 6px; }
   .stat-n { font-size: 22px; font-weight: 200; color: #0f0f0f; line-height: 1; letter-spacing: -0.02em; }
-  .stat-l { font-size: 10px; font-weight: 500; letter-spacing: 0.05em; color: #c0c0c0; text-transform: lowercase; }
+  .stat-l { font-size: 10px; font-weight: 500; letter-spacing: 0.05em; color: #999; text-transform: lowercase; }
   .stat-sep { width: 1px; height: 18px; background: #ebebeb; }
 
   /* ── Section shared ── */
-  .section-label { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: #c0c0c0; margin: 0; }
+  .section-label { font-size: 10px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: #999; margin: 0; }
   .section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-  .section-count { font-size: 10px; font-weight: 500; color: #d0d0d0; background: rgba(0,0,0,0.03); padding: 2px 7px; border-radius: 4px; }
+  .section-count { font-size: 10px; font-weight: 500; color: #aaa; background: rgba(0,0,0,0.04); padding: 2px 7px; border-radius: 4px; }
 
-  /* ── Actions ── */
-  .actions-section { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 0 24px 28px; animation: fadeUp .6s cubic-bezier(0.16,1,0.3,1) .06s both; }
-  .actions-section .section-label { margin-bottom: 12px; }
-  .actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
-  .action-pill { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px 10px 12px; background: rgba(255,255,255,0.6); backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.05); cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 500; color: #888; transition: all .2s cubic-bezier(0.16,1,0.3,1); border-radius: 0; }
-  .action-pill:hover { border-color: rgba(0,0,0,0.1); color: #0f0f0f; background: rgba(255,255,255,0.85); transform: translateY(-1px); box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
-  .action-pill-icon { display: flex; align-items: center; justify-content: center; color: #b0b0b0; transition: color .2s; }
-  .action-pill:hover .action-pill-icon { color: #0f0f0f; }
+  /* ── Team strip ── */
+  .team-strip {
+    display: flex; align-items: center; gap: 12px;
+    max-width: 560px; margin: 0 auto;
+    padding: 16px 24px 20px;
+    cursor: pointer; transition: opacity .15s;
+    animation: fadeUp .5s cubic-bezier(0.16,1,0.3,1) .06s both;
+  }
+  .team-strip:hover { opacity: 0.75; }
+  .team-strip:active { opacity: 0.6; }
+  .team-avatars { display: flex; align-items: center; }
+  .team-avatar-circle {
+    width: 32px; height: 32px; border-radius: 50%;
+    overflow: hidden; flex-shrink: 0;
+    background: #f0f0f0;
+    border: 2px solid #fafafa;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .team-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .team-avatar-ph { font-size: 11px; font-weight: 600; color: #999; line-height: 1; }
+  .team-plus-btn {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: rgba(0,0,0,0.04); border: 1.5px dashed rgba(0,0,0,0.12);
+    display: flex; align-items: center; justify-content: center;
+    color: #aaa; flex-shrink: 0;
+  }
+  .team-label { font-size: 12px; font-weight: 400; color: #999; flex: 1; letter-spacing: 0.01em; }
 
   /* ── Recent ── */
   .recent-section { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 0 24px; animation: fadeUp .6s cubic-bezier(0.16,1,0.3,1) .12s both; }
 
   .empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 52px 20px; text-align: center; }
   .empty-icon { width: 56px; height: 56px; border-radius: 16px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.04); display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
-  .empty-title { font-size: 14px; color: #b0b0b0; font-weight: 400; }
-  .empty-sub { font-size: 12px; color: #d0d0d0; font-weight: 300; }
+  .empty-title { font-size: 14px; color: #888; font-weight: 400; }
+  .empty-sub { font-size: 12px; color: #aaa; font-weight: 300; }
 
   .recent-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
   @media (max-width: 400px) { .recent-grid { grid-template-columns: 1fr; } }
@@ -634,14 +668,14 @@ const styles = `
 
   .rc-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 3px; }
   .rc-title { font-size: 13px; font-weight: 600; color: #0f0f0f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em; line-height: 1.3; }
-  .rc-meta { font-size: 11px; color: #b5b5b5; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; font-weight: 400; }
-  .rc-sep { color: #ddd; }
-  .rc-album-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #999; }
-  .rc-single { color: #c0b8b0; font-style: italic; }
+  .rc-meta { font-size: 11px; color: #999; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; font-weight: 400; }
+  .rc-sep { color: #bbb; }
+  .rc-album-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #888; }
+  .rc-single { color: #a09890; font-style: italic; }
 
   /* ── View toggle ── */
   .view-toggle { display:flex; gap:2px; margin-left:auto; }
-  .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#d0d0d0; transition:all .15s; }
+  .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#aaa; transition:all .15s; }
   .vt-btn:hover { color:#999; background:rgba(0,0,0,0.02); }
   .vt-btn.active { color:#0f0f0f; background:rgba(0,0,0,0.04); border-color:rgba(0,0,0,0.05); }
 
@@ -657,11 +691,11 @@ const styles = `
   .rl-cover-ph.track { background:linear-gradient(135deg,#f5f3f0,#ede9e5); color:#c8c0b8; }
   .rl-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
   .rl-title { font-size:13px; font-weight:500; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
-  .rl-meta { font-size:11px; color:#b5b5b5; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; }
+  .rl-meta { font-size:11px; color:#999; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; }
   .rl-type { font-size:9px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; }
   .rl-type.album { color:#0f0f0f; }
   .rl-type.track { color:#999; }
-  .rl-time { font-size:11px; color:#d0d0d0; flex-shrink:0; }
+  .rl-time { font-size:11px; color:#aaa; flex-shrink:0; }
 
   /* ── Loader ── */
   .loader-wrap { min-height: 100dvh; background: #fafafa; display: flex; align-items: center; justify-content: center; }

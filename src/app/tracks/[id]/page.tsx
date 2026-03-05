@@ -252,19 +252,19 @@ export default function TrackPage() {
   )
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg) } }
         @keyframes fadeUp { from { opacity:0;transform:translateY(10px) } to { opacity:1;transform:none } }
         .ver-card { border-radius:6px; overflow:hidden; background:rgba(255,255,255,0.65); backdrop-filter:blur(8px); border:1px solid rgba(0,0,0,0.04); transition:all .25s cubic-bezier(0.16,1,0.3,1); animation:fadeUp .4s cubic-bezier(0.16,1,0.3,1) both; }
         .ver-card.active { border-color:rgba(15,15,15,0.15); box-shadow:0 2px 16px rgba(0,0,0,0.04); }
         .tag-active { font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:#fff; background:#0f0f0f; padding:3px 8px; border-radius:3px; }
-        .tag-meta { font-size:11px; color:#b5b5b5; font-weight:400; }
+        .tag-meta { font-size:11px; color:#999; font-weight:400; }
         .activate-btn { font-size:10px; color:#999; background:none; border:1px solid rgba(0,0,0,0.06); cursor:pointer; padding:5px 12px; font-family:inherit; border-radius:3px; transition:all .15s; }
         .activate-btn:hover { border-color:rgba(0,0,0,0.15); color:#0f0f0f; }
         .edit-overlay { position:fixed; inset:0; z-index:100; display:flex; align-items:flex-end; justify-content:center; transition:background .32s ease, backdrop-filter .32s ease; }
         .edit-panel { width:100%; max-width:560px; background:#fafafa; border-top:1px solid #eee; padding:28px 24px 48px; max-height:90dvh; overflow-y:auto; font-family:Outfit,sans-serif; transition:transform .34s cubic-bezier(0.32,0.72,0,1), opacity .28s ease; }
-        .edit-label { display:block; font-size:10px; font-weight:600; letter-spacing:0.2em; text-transform:uppercase; color:#b0b0b0; margin-bottom:8px; }
+        .edit-label { display:block; font-size:10px; font-weight:600; letter-spacing:0.2em; text-transform:uppercase; color:#999; margin-bottom:8px; }
         .edit-input { width:100%; padding:11px 14px; border:1px solid rgba(0,0,0,0.06); background:rgba(255,255,255,0.6); backdrop-filter:blur(6px); font-size:14px; font-family:inherit; outline:none; box-sizing:border-box; border-radius:5px; transition:border-color .2s, box-shadow .2s; color:#0f0f0f; }
         .edit-input:focus { border-color:rgba(0,0,0,0.15); box-shadow:0 0 0 3px rgba(0,0,0,0.04); }
         .save-btn { width:100%; padding:13px; background:#0f0f0f; color:#fff; border:none; cursor:pointer; font-size:13px; font-weight:500; font-family:inherit; border-radius:5px; transition:all .2s; display:flex; align-items:center; justify-content:center; gap:8px; }
@@ -272,14 +272,14 @@ export default function TrackPage() {
         .save-btn:not(:disabled):hover { background:#2a2a2a; }
       `}</style>
 
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 24px 60px', animation: 'fadeUp .4s ease both' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 24px 140px', animation: 'fadeUp .4s ease both' }}>
         {coverUrl && (
           <div style={{ width: 96, height: 96, borderRadius: 8, overflow: 'hidden', marginBottom: 20, boxShadow: '0 4px 24px rgba(0,0,0,0.08)', border: '1px solid rgba(0,0,0,0.04)' }}>
             <img src={coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           </div>
         )}
         <h1 style={{ fontSize: 26, fontWeight: 200, color: '#0f0f0f', margin: '0 0 6px', letterSpacing: '-0.025em', lineHeight: 1.15 }}>{track?.title}</h1>
-        {track?.description && <p style={{ fontSize: 13, color: '#a0a0a0', lineHeight: 1.6, margin: '0 0 28px', fontWeight: 300 }}>{track.description}</p>}
+        {track?.description && <p style={{ fontSize: 13, color: '#777', lineHeight: 1.6, margin: '0 0 28px', fontWeight: 300 }}>{track.description}</p>}
 
         {/* Main play button */}
         {versions.some(v => audioUrls[v.id]) && (
@@ -302,8 +302,8 @@ export default function TrackPage() {
           </button>
         )}
 
-        <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#c0c0c0', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          Versiones <span style={{ fontSize: 10, fontWeight: 500, color: '#d0d0d0', background: 'rgba(0,0,0,0.03)', padding: '2px 7px', borderRadius: 4 }}>{versions.length}</span>
+        <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#999', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          Versiones <span style={{ fontSize: 10, fontWeight: 500, color: '#aaa', background: 'rgba(0,0,0,0.04)', padding: '2px 7px', borderRadius: 4 }}>{versions.length}</span>
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -342,7 +342,7 @@ export default function TrackPage() {
                   )}
                 </div>
               </div>
-              {v.notes && <p style={{ fontSize: 12, color: '#a0a0a0', padding: '10px 16px 14px', margin: 0, lineHeight: 1.55, fontWeight: 300 }}>{v.notes}</p>}
+              {v.notes && <p style={{ fontSize: 12, color: '#777', padding: '10px 16px 14px', margin: 0, lineHeight: 1.55, fontWeight: 300 }}>{v.notes}</p>}
             </div>
           ))}
         </div>
@@ -462,7 +462,7 @@ export default function TrackPage() {
                   {editCoverFile && (
                     <button type="button" onClick={() => { setEditCoverFile(null); setEditCoverPreview(track?.cover_path ? coverUrl : null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 11, fontFamily: 'inherit', textAlign: 'left', padding: 0 }}>Descartar cambio</button>
                   )}
-                  <p style={{ fontSize: 11, color: '#c0c0c0', margin: 0 }}>JPG, PNG, WebP</p>
+                  <p style={{ fontSize: 11, color: '#999', margin: 0 }}>JPG, PNG, WebP</p>
                 </div>
                 <input ref={coverInputRef} type="file" accept="image/*" onChange={handleEditCover} style={{ display: 'none' }} />
               </div>

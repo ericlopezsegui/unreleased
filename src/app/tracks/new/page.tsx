@@ -145,11 +145,11 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
     }, 300)
   }
 
-  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#b0b0b0', marginBottom: 8 }
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#999', marginBottom: 8 }
   const inputStyle: React.CSSProperties = { width: '100%', padding: '11px 14px', border: '1px solid rgba(0,0,0,0.06)', background: 'rgba(255,255,255,0.6)', backdropFilter: 'blur(6px)', fontSize: 14, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box', borderRadius: 5, transition: 'border-color .2s, box-shadow .2s', color: '#0f0f0f' }
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
 
       {/* Barra de progreso */}
@@ -159,7 +159,7 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
         </div>
       )}
 
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '32px 24px 80px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: '32px 24px 140px' }}>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
           {/* Portada */}
@@ -185,7 +185,7 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
                     Quitar
                   </button>
                 )}
-                <p style={{ fontSize: 11, color: '#c0c0c0', margin: 0 }}>JPG, PNG, WebP</p>
+                <p style={{ fontSize: 11, color: '#999', margin: 0 }}>JPG, PNG, WebP</p>
               </div>
             </div>
             <input ref={coverRef} type="file" accept="image/*" onChange={handleCover} style={{ display: 'none' }} />
@@ -218,7 +218,7 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
                 <>
                   <Ic d={['M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4', 'M17 8l-5-5-5 5', 'M12 3v12']} s={24} c="#ccc" />
                   <p style={{ fontSize: 13, color: '#bbb', margin: '10px 0 4px' }}>Arrastra o haz clic para subir</p>
-                  <p style={{ fontSize: 11, color: '#ddd', margin: 0 }}>MP3, WAV, FLAC, AIFF · BPM y tonalidad se detectan automáticamente</p>
+                  <p style={{ fontSize: 11, color: '#aaa', margin: 0 }}>MP3, WAV, FLAC, AIFF · BPM y tonalidad se detectan automáticamente</p>
                 </>
               )}
             </div>

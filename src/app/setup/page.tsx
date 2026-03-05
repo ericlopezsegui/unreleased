@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WaveBackground } from '@/components/ui/wave-background'
 
-type Step = 'profile' | 'artist' | 'done'
+type Step = 'profile' | 'choice' | 'artist' | 'join' | 'done'
 
 interface CollapseProps {
   open: boolean
@@ -46,6 +46,12 @@ export default function SetupPage() {
   const [artistBio, setArtistBio] = useState('')
   const [artistAvatarFile, setArtistAvatarFile] = useState<File | null>(null)
   const [artistAvatarPreview, setArtistAvatarPreview] = useState<string | null>(null)
+
+  const [mode, setMode] = useState<'create' | 'join' | null>(null)
+  const [joinCode, setJoinCode] = useState('')
+  const [joinLoading, setJoinLoading] = useState(false)
+  const [joinError, setJoinError] = useState<string | null>(null)
+  const [savedAvatarPath, setSavedAvatarPath] = useState<string | null>(null)
 
   const profileInputRef = useRef<HTMLInputElement>(null)
   const artistInputRef = useRef<HTMLInputElement>(null)
@@ -109,7 +115,8 @@ export default function SetupPage() {
         return
       }
 
-      goTo('artist')
+      setSavedAvatarPath(avatarPath)
+      goTo('choice')
     } catch (err: unknown) {
       console.error('Error en handleProfileSubmit:', err)
       setError(err instanceof Error ? err.message : 'Ocurrió un error al guardar tu perfil')
@@ -210,16 +217,40 @@ export default function SetupPage() {
     }
   }
 
-  const skipArtist = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      await supabase.from('profiles').update({ onboarding_completed: true }).eq('user_id', user.id)
+  const handleJoinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const code = joinCode.trim().toUpperCase()
+    if (code.length < 6) { setJoinError('Introduce el código de 6 caracteres completo'); return }
+    setJoinLoading(true)
+    setJoinError(null)
+    try {
+      const { data: status, error } = await supabase.rpc('accept_artist_invite', {
+        p_token: code,
+        p_display_name: displayName.trim(),
+        p_avatar_path: savedAvatarPath ?? '',
+      })
+      if (error) throw error
+      const msgs: Record<string, string> = {
+        invalid: 'Código incorrecto o no existe',
+        used: 'Este código ya fue utilizado',
+        expired: 'Este código ha caducado',
+        not_authenticated: 'Debes iniciar sesión',
+      }
+      if (status === 'ok') {
+        goTo('done')
+        setTimeout(() => router.push('/home'), 2000)
+      } else {
+        setJoinError(msgs[status as string] ?? `Error: ${status}`)
+      }
+    } catch (err: unknown) {
+      setJoinError(err instanceof Error ? err.message : 'Error al unirte al equipo')
+    } finally {
+      setJoinLoading(false)
     }
-    router.push('/onboarding')
   }
 
-  const steps: Step[] = ['profile', 'artist', 'done']
-  const stepIndex = steps.indexOf(step)
+  const stepIndex = step === 'profile' ? 0 : step === 'done' ? 2 : 1
+  const stepLabel2 = mode === 'join' ? 'Unirte' : 'Artista'
 
   return (
     <div className="relative min-h-screen bg-[#fafafa]">
@@ -246,7 +277,7 @@ export default function SetupPage() {
         {/* Step indicator */}
         <div className="flex justify-center mt-8 animate-fade-in-up animate-delay-100">
           <div className="flex items-center gap-3">
-            {['Perfil', 'Artista'].map((label, i) => (
+            {['Perfil', stepLabel2].map((label, i) => (
               <div key={label} className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
                   <div style={{
@@ -379,6 +410,41 @@ export default function SetupPage() {
               </form>
             </div>
 
+            {/* STEP: CHOICE */}
+            <div style={{
+              opacity: transitioning || step !== 'choice' ? 0 : 1,
+              transform: transitioning ? 'translateY(10px)' : 'translateY(0)',
+              transition: 'opacity 0.28s ease, transform 0.28s ease',
+              display: step === 'choice' ? 'block' : 'none',
+            }}>
+              <div className="mb-10">
+                <h2 style={{ fontSize: '1.8rem', fontWeight: 200, color: '#0f0f0f', lineHeight: 1.2 }}>
+                  ¿Qué quieres hacer?
+                </h2>
+                <p style={{ marginTop: 6, fontSize: 14, color: '#aaa' }}>
+                  Empieza creando tu proyecto o únete al de alguien
+                </p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <button
+                  type="button"
+                  onClick={() => { setMode('create'); goTo('artist') }}
+                  style={{ width: '100%', padding: '24px 20px', background: '#0f0f0f', color: '#fff', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'Outfit, sans-serif', display: 'flex', flexDirection: 'column', gap: 6 }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 500 }}>Crear mi artista</span>
+                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>Configura tu proyecto artístico desde cero</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('join'); goTo('join') }}
+                  style={{ width: '100%', padding: '24px 20px', background: '#fff', color: '#0f0f0f', border: '1.5px solid #e5e5e5', cursor: 'pointer', textAlign: 'left', fontFamily: 'Outfit, sans-serif', display: 'flex', flexDirection: 'column', gap: 6 }}
+                >
+                  <span style={{ fontSize: 15, fontWeight: 500 }}>Unirme a un artista</span>
+                  <span style={{ fontSize: 12, color: '#bbb' }}>Tengo un código de invitación</span>
+                </button>
+              </div>
+            </div>
+
             {/* STEP: ARTIST */}
             <div style={{
               opacity: transitioning || step !== 'artist' ? 0 : 1,
@@ -495,8 +561,53 @@ export default function SetupPage() {
                 </button>
 
                 <div style={{ textAlign: 'center' }}>
-                  <button type="button" onClick={skipArtist} className="link-hover" style={{ fontSize: 12 }}>
-                    Ahora no, lo haré más tarde
+                  <button type="button" onClick={() => goTo('choice')} className="link-hover" style={{ fontSize: 12 }}>
+                    Volver
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* STEP: JOIN */}
+            <div style={{
+              opacity: transitioning || step !== 'join' ? 0 : 1,
+              transform: transitioning ? 'translateY(10px)' : 'translateY(0)',
+              transition: 'opacity 0.28s ease, transform 0.28s ease',
+              display: step === 'join' ? 'block' : 'none',
+            }}>
+              <div className="mb-10">
+                <h2 style={{ fontSize: '1.8rem', fontWeight: 200, color: '#0f0f0f', lineHeight: 1.2 }}>
+                  Introduce el código
+                </h2>
+                <p style={{ marginTop: 6, fontSize: 14, color: '#aaa' }}>
+                  Tu owner debe haberte pasado un código de 6 caracteres
+                </p>
+              </div>
+              <form onSubmit={handleJoinSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#aaa', marginBottom: 8 }}>
+                    Código de invitación
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ABC123"
+                    value={joinCode}
+                    onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
+                    className="input-field"
+                    maxLength={6}
+                    autoComplete="off"
+                    style={{ letterSpacing: '0.3em', fontSize: 24, fontWeight: 600 }}
+                  />
+                </div>
+                {joinError && <p style={{ fontSize: 13, color: '#e53e3e', fontWeight: 500 }}>{joinError}</p>}
+                <button type="submit" className="btn-primary" disabled={joinLoading || joinCode.length < 6}>
+                  {joinLoading ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Verificando...</>
+                  ) : 'Unirme al equipo'}
+                </button>
+                <div style={{ textAlign: 'center' }}>
+                  <button type="button" onClick={() => { setJoinError(null); goTo('choice') }} className="link-hover" style={{ fontSize: 12 }}>
+                    Volver
                   </button>
                 </div>
               </form>

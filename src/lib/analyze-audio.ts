@@ -179,28 +179,37 @@ async function detectBpm(audioBuffer: AudioBuffer): Promise<number | null> {
   }
 }
 
-// ─── Key: multi-segment chromagram + Krumhansl-Schmuckler ──────────────────
+// ─── Key: full-track chromagram + spectral whitening + Krumhansl-Schmuckler ─
 
 /**
- * Build a chroma vector from a signal segment using FFT.
- * Uses LINEAR magnitude (sqrt of power) instead of energy — this prevents
- * a few loud notes from dominating the chroma distribution, giving a more
- * representative tonal fingerprint.
- * Frequency range restricted to A1–C7 (55–2093 Hz) to avoid percussion noise.
+ * Build a chroma vector using per-octave spectral whitening.
+ *
+ * Standard FFT maps bins linearly, so bass notes dominate the energy sum and
+ * high notes get sub-bin precision.  CQT (used by librosa) avoids this by
+ * giving every octave equal frequency resolution.  We achieve the same effect
+ * by accumulating energy into 7 separate per-octave buckets and L2-normalising
+ * each before summing — this is called "spectral whitening" and is the core
+ * reason librosa's chroma_cqt works better than a plain FFT approach.
+ *
+ * FFT size 8192 at 22050 Hz → ~2.69 Hz/bin, enough to distinguish semitones
+ * from C2 (65 Hz) upward without the bin-sharing that plagued 4096@11025.
  */
 async function buildChroma(signal: Float32Array, sr: number): Promise<Float64Array> {
-  const FFT_SIZE = 4096
+  const FFT_SIZE = 8192
   const HOP_SIZE = 2048
-  const chroma = new Float64Array(12)
+  const N_OCTAVES = 7  // C2–B8
+
+  const perOctave = Array.from({ length: N_OCTAVES }, () => new Float64Array(12))
 
   const hann = new Float64Array(FFT_SIZE)
   for (let i = 0; i < FFT_SIZE; i++) hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (FFT_SIZE - 1)))
 
-  const minBin = Math.ceil(55 * FFT_SIZE / sr)
-  const maxBin = Math.min(Math.floor(2093 * FFT_SIZE / sr), FFT_SIZE >> 1)
+  // C2 (65.4 Hz) → B7 (3951 Hz) — covers all tonal content, ignores percussion
+  const minBin = Math.ceil(65.4 * FFT_SIZE / sr)
+  const maxBin = Math.min(Math.floor(3951 * FFT_SIZE / sr), FFT_SIZE >> 1)
 
   const numFrames = Math.floor((signal.length - FFT_SIZE) / HOP_SIZE)
-  const BATCH = 16
+  const BATCH = 8
   const re = new Float64Array(FFT_SIZE)
   const im = new Float64Array(FFT_SIZE)
 
@@ -211,17 +220,28 @@ async function buildChroma(signal: Float32Array, sr: number): Promise<Float64Arr
       for (let i = 0; i < FFT_SIZE; i++) { re[i] = signal[off + i] * hann[i]; im[i] = 0 }
       fft(re, im)
       for (let k = minBin; k < maxBin; k++) {
-        // LINEAR magnitude — not energy (mag²). Reduces dominance of loud peaks.
         const mag = Math.sqrt(re[k] * re[k] + im[k] * im[k])
         if (mag < 1e-7) continue
         const freq = k * sr / FFT_SIZE
         const midi = 12 * Math.log2(freq / 440) + 69
-        const bin = ((Math.round(midi) % 12) + 12) % 12
-        chroma[bin] += mag
+        const pitchClass = ((Math.round(midi) % 12) + 12) % 12
+        const octave = Math.max(0, Math.min(N_OCTAVES - 1, Math.floor(midi / 12) - 1))
+        perOctave[octave][pitchClass] += mag
       }
     }
     await yieldFrame()
   }
+
+  // Spectral whitening: L2-normalise each octave band before combining.
+  // This prevents bass octaves (C2-C3) from drowning out the melodic octaves.
+  const chroma = new Float64Array(12)
+  for (let oct = 0; oct < N_OCTAVES; oct++) {
+    let norm = 0
+    for (let b = 0; b < 12; b++) norm += perOctave[oct][b] * perOctave[oct][b]
+    norm = Math.sqrt(norm)
+    if (norm > 1e-8) for (let b = 0; b < 12; b++) chroma[b] += perOctave[oct][b] / norm
+  }
+
   return chroma
 }
 
@@ -230,59 +250,63 @@ async function detectKey(audioBuffer: AudioBuffer): Promise<string | null> {
     const srcRate = audioBuffer.sampleRate
     const dur = audioBuffer.duration
 
-    // Analyze 3 windows spread across the song body (skip intro/outro).
-    // Using the middle portion is far more representative than always starting from 0.
-    const segLen = Math.min(30, dur * 0.25)
-    const segments: [number, number][] = []
-    const offsets = [0.25, 0.50, 0.72]
-    for (const frac of offsets) {
-      const start = dur * frac
-      if (start + segLen < dur) segments.push([start, segLen])
-    }
-    if (segments.length === 0) segments.push([0, Math.min(40, dur)])
+    // Analyse the core of the track (up to 120 s, centred) — mirrors librosa
+    // analysing the full file.  Skipping the first and last few seconds avoids
+    // intros/outros that may be in a different key or tonally ambiguous.
+    const maxDur = Math.min(dur, 120)
+    const startSec = Math.max(0, (dur - maxDur) / 2)
 
-    const factor = Math.max(1, Math.floor(srcRate / 11025))
+    // 22050 Hz matches librosa's default sr — important for the bin mapping
+    const factor = Math.max(1, Math.floor(srcRate / 22050))
     const sr = srcRate / factor
 
-    // Compute per-segment chromas and L2-normalize before combining
-    const combined = new Float64Array(12)
-    for (const [start, length] of segments) {
-      const raw = sliceToMono(audioBuffer, start, length)
-      const signal = factor > 1 ? downsampleMono(raw, factor) : raw
-      const wChroma = await buildChroma(signal, sr)
+    const raw = sliceToMono(audioBuffer, startSec, maxDur)
+    const signal = factor > 1 ? downsampleMono(raw, factor) : raw
 
-      let norm = 0
-      for (let i = 0; i < 12; i++) norm += wChroma[i] * wChroma[i]
-      norm = Math.sqrt(norm)
-      if (norm > 0) for (let i = 0; i < 12; i++) combined[i] += wChroma[i] / norm
-    }
+    const chromaRaw = await buildChroma(signal, sr)
 
-    const cmax = Math.max(...combined)
-    if (cmax === 0) return null
-    const cn = Array.from(combined).map(v => v / cmax)
+    // Normalise to a probability distribution (mirrors Python's chroma_vals = chroma.mean(axis=1))
+    const chromaSum = chromaRaw.reduce((a, b) => a + b, 0)
+    if (chromaSum === 0) return null
+    const chroma = Array.from(chromaRaw).map(v => v / chromaSum)
 
-    // Krumhansl-Schmuckler key profiles
+    // Krumhansl-Schmuckler tonal profiles
     const MAJOR = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
     const MINOR = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
 
-    // Pearson correlation (chroma rotated so index 0 = tonic)
-    const pearson = (profile: number[], shift: number): number => {
+    // Pearson correlation — exact equivalent of Python's np.corrcoef(chroma_vals, rolled_profile)[0,1]
+    const pearson = (values: number[], profile: number[], shift: number): number => {
       let sx = 0, sy = 0
-      for (let i = 0; i < 12; i++) { sx += cn[i]; sy += profile[(i - shift + 12) % 12] }
+      for (let i = 0; i < 12; i++) { sx += values[i]; sy += profile[(i - shift + 12) % 12] }
       const mx = sx / 12, my = sy / 12
       let num = 0, dx2 = 0, dy2 = 0
       for (let i = 0; i < 12; i++) {
-        const a = cn[i] - mx, b = profile[(i - shift + 12) % 12] - my
+        const a = values[i] - mx, b = profile[(i - shift + 12) % 12] - my
         num += a * b; dx2 += a * a; dy2 += b * b
       }
       return dx2 > 0 && dy2 > 0 ? num / Math.sqrt(dx2 * dy2) : 0
     }
 
+    // Step 1 — find the dominant pitch class (Python: key_index = chroma_vals.argmax()).
+    // Locking the tonic first eliminates the relative-major/minor ambiguity that
+    // trips up a full 24-key exhaustive search when chroma is noisy.
+    const tonicIdx = chroma.reduce((best, v, i) => v > chroma[best] ? i : best, 0)
+
+    // Step 2 — test the tonic and its two neighbours (±1 semitone) to absorb any
+    // small chroma inaccuracy from the FFT bin-rounding, then pick major vs minor
+    // for each candidate via K-S correlation.
+    const candidates = [
+      (tonicIdx + 11) % 12,
+      tonicIdx,
+      (tonicIdx + 1) % 12,
+    ]
+
     let best = -Infinity, bestKey = ''
-    for (let i = 0; i < 12; i++) {
-      const maj = pearson(MAJOR, i), min = pearson(MINOR, i)
-      if (maj > best) { best = maj; bestKey = `${NOTE_NAMES[i]} maj` }
-      if (min > best) { best = min; bestKey = `${NOTE_NAMES[i]} min` }
+    for (const tonic of candidates) {
+      const maj = pearson(chroma, MAJOR, tonic)
+      const min = pearson(chroma, MINOR, tonic)
+      if (maj > best) { best = maj; bestKey = `${NOTE_NAMES[tonic]} maj` }
+      if (min > best) { best = min; bestKey = `${NOTE_NAMES[tonic]} min` }
     }
 
     return bestKey || null

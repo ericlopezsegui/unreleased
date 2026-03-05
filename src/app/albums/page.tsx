@@ -24,17 +24,16 @@ export default function AlbumsPage() {
   const [albumsView, setAlbumsView] = useState<'grid' | 'list'>('grid')
   const router = useRouter()
   const supabase = createClient()
-  const { setTitle, setBackHref, setRightActions } = useHeaderContext()
+  const { setTitle, setRightActions } = useHeaderContext()
 
   useEffect(() => {
     setTitle('Álbumes')
-    setBackHref('/home')
     setRightActions(
       <button onClick={() => router.push('/albums/new')} className="hdr-new-btn">
         <Ic d="M12 5v14M5 12h14" s={12} /> Nuevo
       </button>
     )
-    return () => { setTitle(''); setBackHref(''); setRightActions(null) }
+    return () => { setTitle(''); setRightActions(null) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -89,7 +88,7 @@ export default function AlbumsPage() {
   )
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
       <style>{`
         @keyframes fadeUp { from { opacity:0;transform:translateY(10px) } to { opacity:1;transform:none } }
         @keyframes scaleIn { from { opacity:0;transform:scale(0.96) translateY(8px) } to { opacity:1;transform:scale(1) translateY(0) } }
@@ -101,10 +100,10 @@ export default function AlbumsPage() {
         .alb-card:hover .alb-cover img { transform:scale(1.04); }
         .alb-body { padding:12px 14px 14px; display:flex; flex-direction:column; gap:2px; }
         .alb-title { font-size:13px; font-weight:600; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
-        .alb-meta { font-size:11px; color:#b5b5b5; font-weight:400; }
+        .alb-meta { font-size:11px; color:#999; font-weight:400; }
         .view-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; animation:fadeUp .4s ease both; }
         .view-toggle { display:flex; gap:2px; }
-        .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#d0d0d0; transition:all .15s; }
+        .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#aaa; transition:all .15s; }
         .vt-btn:hover { color:#999; background:rgba(0,0,0,0.02); }
         .vt-btn.active { color:#0f0f0f; background:rgba(0,0,0,0.04); border-color:rgba(0,0,0,0.05); }
         .alb-list { display:flex; flex-direction:column; gap:2px; }
@@ -116,16 +115,16 @@ export default function AlbumsPage() {
         .alb-list-ph { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f0f0f0,#e8e8e8); color:#ccc; }
         .alb-list-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
         .alb-list-title { font-size:13px; font-weight:600; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
-        .alb-list-meta { font-size:11px; color:#b5b5b5; font-weight:400; }
+        .alb-list-meta { font-size:11px; color:#999; font-weight:400; }
       `}</style>
 
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '28px 24px 60px' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '28px 24px 140px' }}>
         {albums.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '60px 0', textAlign: 'center', animation: 'fadeUp .4s ease both' }}>
             <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
               <Ic d={['M12 2a10 10 0 100 20A10 10 0 0012 2z', 'M12 8a4 4 0 100 8 4 4 0 000-8z', 'M12 11a1 1 0 100 2 1 1 0 000-2z']} s={24} />
             </div>
-            <p style={{ fontSize: 14, color: '#b0b0b0', fontWeight: 400 }}>No hay álbumes todavía</p>
+            <p style={{ fontSize: 14, color: '#888', fontWeight: 400 }}>No hay álbumes todavía</p>
             <button onClick={() => router.push('/albums/new')} className="new-btn" style={{ marginTop: 8 }}>
               Crear primer álbum
             </button>

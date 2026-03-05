@@ -60,12 +60,12 @@ export default function NewAlbumPage() {
     router.push(`/albums/${album.id}`)
   }
 
-  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#b0b0b0', marginBottom: 8 }
+  const labelStyle: React.CSSProperties = { display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#999', marginBottom: 8 }
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
 
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '32px 24px 60px' }}>
+      <div style={{ maxWidth: 480, margin: '0 auto', padding: '32px 24px 140px' }}>
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
 
           {/* Portada */}
@@ -76,7 +76,7 @@ export default function NewAlbumPage() {
                 ? <img src={coverPreview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 : <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'linear-gradient(135deg, #f0f0f0, #e8e8e8)' }}>
                     <svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="#ccc" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><path d="M17 8l-5-5-5 5" /><path d="M12 3v12" /></svg>
-                    <span style={{ fontSize: 10, color: '#c0c0c0' }}>Subir imagen</span>
+                    <span style={{ fontSize: 10, color: '#999' }}>Subir imagen</span>
                   </div>}
             </label>
             <input id="cover-input" type="file" accept="image/*" onChange={handleCover} style={{ display: 'none' }} />

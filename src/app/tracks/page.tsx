@@ -32,17 +32,16 @@ export default function TracksPage() {
   const [artistId, setArtistId] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
-  const { setTitle, setBackHref, setRightActions } = useHeaderContext()
+  const { setTitle, setRightActions } = useHeaderContext()
 
   useEffect(() => {
     setTitle('Tracks')
-    setBackHref('/home')
     setRightActions(
       <button onClick={() => router.push(`/tracks/new${artistId ? `?artist=${artistId}` : ''}`)} className="hdr-new-btn">
         <Ic d="M12 5v14M5 12h14" s={12} /> Nuevo
       </button>
     )
-    return () => { setTitle(''); setBackHref(''); setRightActions(null) }
+    return () => { setTitle(''); setRightActions(null) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artistId])
 
@@ -97,20 +96,20 @@ export default function TracksPage() {
   const albumCount = tracks.filter(t => !!t.album_id).length
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
       <style>{`
         @keyframes spin { to { transform:rotate(360deg) } }
         @keyframes fadeUp { from { opacity:0;transform:translateY(10px) } to { opacity:1;transform:none } }
         @keyframes scaleIn { from { opacity:0;transform:scale(0.96) translateY(8px) } to { opacity:1;transform:scale(1) translateY(0) } }
 
         .filter-row { display:flex; gap:4px; }
-        .filter-btn { padding:5px 12px; font-size:11px; font-weight:500; font-family:inherit; background:none; border:1px solid rgba(0,0,0,0.06); border-radius:4px; cursor:pointer; color:#b0b0b0; transition:all .15s; }
+        .filter-btn { padding:5px 12px; font-size:11px; font-weight:500; font-family:inherit; background:none; border:1px solid rgba(0,0,0,0.06); border-radius:4px; cursor:pointer; color:#888; transition:all .15s; }
         .filter-btn.active { background:#0f0f0f; color:#fff; border-color:#0f0f0f; }
         .filter-btn:not(.active):hover { color:#0f0f0f; border-color:rgba(0,0,0,0.12); }
 
         .view-header { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
         .view-toggle { display:flex; gap:2px; margin-left:auto; }
-        .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#d0d0d0; transition:all .15s; }
+        .vt-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; background:none; border:1px solid transparent; border-radius:5px; cursor:pointer; color:#aaa; transition:all .15s; }
         .vt-btn:hover { color:#999; background:rgba(0,0,0,0.02); }
         .vt-btn.active { color:#0f0f0f; background:rgba(0,0,0,0.04); border-color:rgba(0,0,0,0.05); }
 
@@ -126,7 +125,7 @@ export default function TracksPage() {
         .trk-badge { position:absolute; top:8px; left:8px; font-size:9px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; padding:3px 7px; border-radius:3px; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); background:rgba(255,255,255,0.8); color:#666; border:1px solid rgba(0,0,0,0.06); max-width:calc(100% - 16px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .trk-body { padding:12px 14px 14px; display:flex; flex-direction:column; gap:2px; }
         .trk-title { font-size:13px; font-weight:600; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
-        .trk-meta { font-size:11px; color:#b5b5b5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .trk-meta { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
         /* List */
         .trk-list { display:flex; flex-direction:column; gap:2px; }
@@ -138,20 +137,20 @@ export default function TracksPage() {
         .trk-row-ph { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f5f3f0,#ede9e5); color:#c8c0b8; }
         .trk-row-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
         .trk-row-title { font-size:13px; font-weight:500; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
-        .trk-row-meta { font-size:11px; color:#b5b5b5; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; }
+        .trk-row-meta { font-size:11px; color:#999; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; }
         .trk-row-badge { font-size:9px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; padding:2px 6px; border-radius:3px; flex-shrink:0; }
         .trk-row-badge.single { background:rgba(0,0,0,0.04); color:#999; }
         .trk-row-badge.album { background:rgba(15,15,15,0.06); color:#666; }
-        .trk-row-arrow { color:#d8d8d8; flex-shrink:0; }
+        .trk-row-arrow { color:#bbb; flex-shrink:0; }
       `}</style>
 
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 24px 60px' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 24px 140px' }}>
         {tracks.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '60px 0', textAlign: 'center', animation: 'fadeUp .4s ease both' }}>
             <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
               <Ic d={['M9 18V5l12-2v13', 'M6 21a3 3 0 100-6 3 3 0 000 6z', 'M18 19a3 3 0 100-6 3 3 0 000 6z']} s={24} c="#ccc" />
             </div>
-            <p style={{ fontSize: 14, color: '#b0b0b0', fontWeight: 400 }}>No hay tracks todavía</p>
+            <p style={{ fontSize: 14, color: '#888', fontWeight: 400 }}>No hay tracks todavía</p>
             <button onClick={() => router.push(`/tracks/new${artistId ? `?artist=${artistId}` : ''}`)} className="hdr-new-btn" style={{ marginTop: 8 }}>
               Subir primer track
             </button>
@@ -186,7 +185,7 @@ export default function TracksPage() {
             </div>
 
             {filtered.length === 0 ? (
-              <p style={{ fontSize: 13, color: '#c0c0c0', padding: '32px 0', textAlign: 'center' }}>No hay tracks en esta categoría</p>
+              <p style={{ fontSize: 13, color: '#999', padding: '32px 0', textAlign: 'center' }}>No hay tracks en esta categoría</p>
             ) : view === 'grid' ? (
               <div className="trk-grid">
                 {filtered.map((t, i) => (

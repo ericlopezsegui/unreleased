@@ -128,7 +128,7 @@ export default function AlbumPage() {
   )
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 52 }}>
+    <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg) } }
         @keyframes fadeUp { from { opacity:0;transform:translateY(10px) } to { opacity:1;transform:none } }
@@ -139,7 +139,7 @@ export default function AlbumPage() {
         .sec-btn:hover { border-color:rgba(0,0,0,0.15); color:#0f0f0f; background:rgba(255,255,255,0.5); }
         .edit-overlay { position:fixed; inset:0; z-index:100; display:flex; align-items:flex-end; justify-content:center; transition:background .32s ease, backdrop-filter .32s ease; }
         .edit-panel { width:100%; max-width:560px; background:#fafafa; border-top:1px solid #eee; padding:28px 24px 48px; max-height:90dvh; overflow-y:auto; font-family:Outfit,sans-serif; transition:transform .34s cubic-bezier(0.32,0.72,0,1), opacity .28s ease; }
-        .edit-label { display:block; font-size:10px; font-weight:600; letter-spacing:0.2em; text-transform:uppercase; color:#b0b0b0; margin-bottom:8px; }
+        .edit-label { display:block; font-size:10px; font-weight:600; letter-spacing:0.2em; text-transform:uppercase; color:#999; margin-bottom:8px; }
         .edit-input { width:100%; padding:11px 14px; border:1px solid rgba(0,0,0,0.06); background:rgba(255,255,255,0.6); backdrop-filter:blur(6px); font-size:14px; font-family:inherit; outline:none; box-sizing:border-box; border-radius:5px; transition:border-color .2s, box-shadow .2s; color:#0f0f0f; }
         .edit-input:focus { border-color:rgba(0,0,0,0.15); box-shadow:0 0 0 3px rgba(0,0,0,0.04); }
         .save-btn { width:100%; padding:13px; background:#0f0f0f; color:#fff; border:none; cursor:pointer; font-size:13px; font-weight:500; font-family:inherit; border-radius:5px; transition:all .2s; display:flex; align-items:center; justify-content:center; gap:8px; }
@@ -147,7 +147,7 @@ export default function AlbumPage() {
         .save-btn:not(:disabled):hover { background:#2a2a2a; }
       `}</style>
 
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 24px 60px' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', padding: '32px 24px 140px' }}>
         {/* Header */}
         <div style={{ display: 'flex', gap: 20, marginBottom: 36, animation: 'fadeUp .4s ease both' }}>
           <div style={{ width: 110, height: 110, background: '#f0f0f0', flexShrink: 0, overflow: 'hidden', borderRadius: 6, position: 'relative' }}>
@@ -159,20 +159,20 @@ export default function AlbumPage() {
           </div>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <h1 style={{ fontSize: 24, fontWeight: 200, color: '#0f0f0f', margin: '0 0 6px', letterSpacing: '-0.02em', lineHeight: 1.15 }}>{album?.title}</h1>
-            {album?.description && <p style={{ fontSize: 13, color: '#a0a0a0', lineHeight: 1.55, margin: 0, fontWeight: 300 }}>{album.description}</p>}
-            <p style={{ fontSize: 11, color: '#c0c0c0', margin: '10px 0 0', fontWeight: 400 }}>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</p>
+            {album?.description && <p style={{ fontSize: 13, color: '#777', lineHeight: 1.55, margin: 0, fontWeight: 300 }}>{album.description}</p>}
+            <p style={{ fontSize: 11, color: '#999', margin: '10px 0 0', fontWeight: 400 }}>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</p>
           </div>
         </div>
 
         {/* Tracks */}
         <div>
-          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#c0c0c0', marginBottom: 12 }}>Tracks</p>
+          <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#999', marginBottom: 12 }}>Tracks</p>
           {tracks.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '48px 0', textAlign: 'center' }}>
               <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
-                <Ic d={['M9 18V5l12-2v13', 'M6 21a3 3 0 100-6 3 3 0 000 6z', 'M18 19a3 3 0 100-6 3 3 0 000 6z']} s={22} c="#d0d0d0" />
+                <Ic d={['M9 18V5l12-2v13', 'M6 21a3 3 0 100-6 3 3 0 000 6z', 'M18 19a3 3 0 100-6 3 3 0 000 6z']} s={22} c="#bbb" />
               </div>
-              <p style={{ fontSize: 14, color: '#b0b0b0', fontWeight: 400 }}>Aún no hay tracks</p>
+              <p style={{ fontSize: 14, color: '#888', fontWeight: 400 }}>Aún no hay tracks</p>
               <button onClick={() => router.push(`/tracks/new?album=${id}&artist=${album?.artist_id}`)} className="new-btn" style={{ marginTop: 8 }}>
                 Añadir track
               </button>
@@ -181,11 +181,11 @@ export default function AlbumPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {tracks.map((track, i) => (
                 <button key={track.id} onClick={() => router.push(`/tracks/${track.id}`)} className="track-row" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <span style={{ width: 24, fontSize: 12, color: '#c0c0c0', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{track.position ?? i + 1}</span>
+                  <span style={{ width: 24, fontSize: 12, color: '#999', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{track.position ?? i + 1}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontSize: 13.5, fontWeight: 500, color: '#0f0f0f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{track.title}</p>
                   </div>
-                  <Ic d="M9 18l6-6-6-6" s={13} c="#ddd" />
+                  <Ic d="M9 18l6-6-6-6" s={13} c="#bbb" />
                 </button>
               ))}
             </div>
@@ -220,7 +220,7 @@ export default function AlbumPage() {
                   {editCoverFile && (
                     <button type="button" onClick={() => { setEditCoverFile(null); setEditCoverPreview(coverUrl) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 11, fontFamily: 'inherit', textAlign: 'left', padding: 0 }}>Descartar cambio</button>
                   )}
-                  <p style={{ fontSize: 11, color: '#c0c0c0', margin: 0 }}>JPG, PNG, WebP</p>
+                  <p style={{ fontSize: 11, color: '#999', margin: 0 }}>JPG, PNG, WebP</p>
                 </div>
                 <input ref={coverInputRef} type="file" accept="image/*" onChange={handleEditCover} style={{ display: 'none' }} />
               </div>
