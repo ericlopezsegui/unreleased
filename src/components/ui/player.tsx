@@ -18,6 +18,29 @@ function fmt(s: number) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 }
 
+/* Circular-arrow skip button icon with number label */
+function SkipIcon({ dir }: { dir: 'back' | 'fwd' }) {
+  return (
+    <svg width={28} height={28} viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      {dir === 'back' ? (
+        // counterclockwise arc, arrowhead at top-left
+        <>
+          <path d="M14 4a10 10 0 1 0 7.07 2.93" />
+          <polyline points="9,4 14,4 14,9" />
+        </>
+      ) : (
+        // clockwise arc, arrowhead at top-right
+        <>
+          <path d="M14 4a10 10 0 1 1-7.07 2.93" />
+          <polyline points="19,4 14,4 14,9" />
+        </>
+      )}
+      <text x="14" y="19.5" textAnchor="middle" fontSize="7" fontWeight="700"
+        fill="currentColor" stroke="none" fontFamily="Outfit,sans-serif" letterSpacing="-0.5">15</text>
+    </svg>
+  )
+}
+
 /* ── Module-level peaks cache ────────────────────────────────────── */
 const peaksCache = new Map<string, number[]>()
 
@@ -50,6 +73,8 @@ function WaveCanvas({
   // scrub drag state (non-mini only)
   const draggingRef = useRef(false)
   const [scrubProgress, setScrubProgress] = useState<number | null>(null)
+  // mini swipe drag state
+  const miniDragRef = useRef<{ active: boolean; startX: number; startProgress: number }>({ active: false, startX: 0, startProgress: 0 })
 
   /* decode peaks once */
   useEffect(() => {
@@ -238,7 +263,8 @@ function WaveCanvas({
     return () => ro.disconnect()
   }, [mini, drawFull, progress, scrubProgress])
 
-  const getPosFromEvent = (clientX: number, rect: DOMRect): number => {
+  // position-based seek: maps tap position to timeline (used for non-mini scrub and mini tap)
+  const getPosFromTap = (clientX: number, rect: DOMRect): number => {
     if (mini) {
       const canvas = canvasRef.current
       if (!canvas || peaks.length === 0) return progress
@@ -254,28 +280,48 @@ function WaveCanvas({
   }
 
   const handlePointerDown = (clientX: number, rect: DOMRect) => {
-    if (mini) return
+    if (mini) {
+      miniDragRef.current = { active: true, startX: clientX, startProgress: progress }
+      return
+    }
     draggingRef.current = true
-    const p = getPosFromEvent(clientX, rect)
+    const p = getPosFromTap(clientX, rect)
     setScrubProgress(p)
     onSeek(p)
   }
 
   const handlePointerMove = (clientX: number, rect: DOMRect) => {
-    if (mini || !draggingRef.current) return
-    const p = getPosFromEvent(clientX, rect)
+    if (mini) {
+      if (!miniDragRef.current.active) return
+      const canvas = canvasRef.current
+      if (!canvas || peaks.length === 0) return
+      const w = canvas.offsetWidth
+      const visCount = Math.floor(w / (2.5 + 2))
+      const deltaX = clientX - miniDragRef.current.startX
+      // natural-scroll: drag left (−deltaX) → forward in time (+progress)
+      const deltaPeaks = -(deltaX / w) * visCount
+      const newProgress = Math.max(0, Math.min(1, miniDragRef.current.startProgress + deltaPeaks / peaks.length))
+      onSeek(newProgress)
+      return
+    }
+    if (!draggingRef.current) return
+    const p = getPosFromTap(clientX, rect)
     setScrubProgress(p)
     onSeek(p)
   }
 
   const handlePointerUp = (clientX: number, rect: DOMRect) => {
     if (mini) {
-      onSeek(getPosFromEvent(clientX, rect))
+      if (!miniDragRef.current.active) return
+      const deltaX = Math.abs(clientX - miniDragRef.current.startX)
+      // small movement = tap → position-based seek
+      if (deltaX < 6) onSeek(getPosFromTap(clientX, rect))
+      miniDragRef.current.active = false
       return
     }
     if (!draggingRef.current) return
     draggingRef.current = false
-    const p = getPosFromEvent(clientX, rect)
+    const p = getPosFromTap(clientX, rect)
     setScrubProgress(null)
     onSeek(p)
   }
@@ -336,7 +382,8 @@ export function Player() {
   const {
     isOpen, isExpanded, isPlaying,
     trackTitle, coverUrl, versions, currentVersionId,
-    close, toggleExpanded, setPlaying, setCurrentVersion,
+    queue, queueIndex,
+    close, toggleExpanded, setPlaying, setCurrentVersion, nextTrack, prevTrack,
   } = usePlayerStore()
 
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -409,7 +456,14 @@ export function Player() {
         src={audioUrl ?? undefined}
         onTimeUpdate={() => { if (audioRef.current) setCurrentTime(audioRef.current.currentTime) }}
         onLoadedMetadata={() => { if (audioRef.current) { setDuration(audioRef.current.duration); audioRef.current.volume = volume; audioRef.current.playbackRate = rate; audioRef.current.play().catch(() => {}) } }}
-        onEnded={() => { setPlaying(false); setCurrentTime(0) }}
+        onEnded={() => {
+          if (queueIndex < queue.length - 1) {
+            nextTrack()
+          } else {
+            setPlaying(false)
+            setCurrentTime(0)
+          }
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         style={{ display: 'none' }}
@@ -430,7 +484,7 @@ export function Player() {
       {/* ── WRAPPER: anchored at bottom, same width as mini bar ── */}
       <div style={{
         position: 'fixed',
-        bottom: 18,
+        bottom: 'calc(64px + env(safe-area-inset-bottom, 0px) + 10px)',
         left: '50%',
         transform: appear ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(130%)',
         width: 'calc(100vw - 32px)',
@@ -488,6 +542,7 @@ export function Player() {
                   <div style={{ fontSize: 15, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{trackTitle}</div>
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 3 }}>
                     {[currentVer?.label, currentVer?.bpm && `${currentVer.bpm} bpm`, currentVer?.key].filter(Boolean).join(' · ')}
+                    {queue.length > 1 && <span style={{ marginLeft: 6, opacity: 0.5 }}>{queueIndex + 1}/{queue.length}</span>}
                   </div>
                 </div>
               </div>
@@ -503,15 +558,21 @@ export function Player() {
 
               {/* transport */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 20 }}>
+                <button className="dp-iBtn" onClick={prevTrack} disabled={queueIndex <= 0} style={{ opacity: queueIndex <= 0 ? 0.2 : 1 }}>
+                  <Ic d="M19 20L9 12l10-8v16zM5 19V5" s={20} />
+                </button>
                 <button className="dp-iBtn" onClick={() => seek(Math.max(0, progress - 15 / duration))}>
-                  <Ic d="M1 4v6h6M3.51 15a9 9 0 100-2" s={22} />
+                  <SkipIcon dir="back" />
                 </button>
                 <button className="dp-play" onClick={() => setPlaying(!isPlaying)}
                   style={{ width: 56, height: 56, boxShadow: isPlaying ? '0 0 0 7px rgba(255,255,255,0.08)' : 'none' }}>
                   <Ic d={isPlaying ? 'M6 4h4v16H6zM14 4h4v16h-4z' : 'M5 3l14 9-14 9V3z'} s={18} c="#111" />
                 </button>
                 <button className="dp-iBtn" onClick={() => seek(Math.min(1, progress + 15 / duration))}>
-                  <Ic d="M23 4v6h-6M20.49 15a9 9 0 110-2" s={22} />
+                  <SkipIcon dir="fwd" />
+                </button>
+                <button className="dp-iBtn" onClick={nextTrack} disabled={queueIndex >= queue.length - 1} style={{ opacity: queueIndex >= queue.length - 1 ? 0.2 : 1 }}>
+                  <Ic d="M5 4l10 8-10 8V4zM19 5v14" s={20} />
                 </button>
               </div>
 
@@ -644,55 +705,70 @@ export function Player() {
         </div>
 
         {/* ══ MINI BAR ══ */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '0 10px 0 12px', height: 68,
-          background: '#111',
-          borderRadius: 16,
-          boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
-          flexShrink: 0,
-        }}>
+        <div
+          onClick={toggleExpanded}
+          style={{
+            position: 'relative',
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '0 6px 0 10px', height: 68,
+            background: '#111',
+            borderRadius: 16,
+            boxShadow: '0 4px 24px rgba(0,0,0,0.35)',
+            flexShrink: 0,
+            cursor: 'pointer',
+            overflow: 'hidden',
+            WebkitTapHighlightColor: 'transparent',
+            userSelect: 'none',
+          }}
+        >
+          {/* thin progress line at bottom */}
+          <div style={{
+            position: 'absolute', bottom: 0, left: 0,
+            height: 2, width: `${progress * 100}%`,
+            background: 'rgba(255,255,255,0.28)',
+            pointerEvents: 'none',
+            transition: 'width 0.25s linear',
+          }} />
 
           {/* cover */}
-          <div style={{ width: 42, height: 42, borderRadius: 7, overflow: 'hidden', flexShrink: 0, background: 'rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {coverUrl
               ? <img src={coverUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
               : <Ic d={['M9 18V5l12-2v13', 'M6 21a3 3 0 100-6 3 3 0 000 6z', 'M18 19a3 3 0 100-6 3 3 0 000 6z']} s={14} c="rgba(255,255,255,0.2)" />
             }
           </div>
 
-          {/* title */}
-          <div style={{ flexShrink: 0, width: 76, minWidth: 0 }}>
+          {/* title + queue position */}
+          <div style={{ flexShrink: 0, width: 80, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.35 }}>{trackTitle}</div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentVer?.label ?? ''}</div>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {currentVer?.label ?? ''}
+              {queue.length > 1 && <span style={{ marginLeft: 5, opacity: 0.55 }}>{queueIndex + 1}/{queue.length}</span>}
+            </div>
           </div>
 
-          {/* scrolling mini waveform */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <WaveCanvas audioUrl={audioUrl} progress={progress} onSeek={seek} height={38} mini />
+          {/* scrolling waveform — stopPropagation so seeking doesn't toggle expand */}
+          <div style={{ flex: 1, minWidth: 0 }} onClick={e => e.stopPropagation()}>
+            <WaveCanvas audioUrl={audioUrl} progress={progress} onSeek={seek} height={36} mini />
           </div>
 
-          {/* remaining time */}
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0, fontVariantNumeric: 'tabular-nums', minWidth: 30, textAlign: 'right' }}>
-            -{fmt(remaining)}
-          </span>
+          {/* controls — stopPropagation */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            <button className="dp-play" onClick={() => setPlaying(!isPlaying)}
+              style={{ width: 42, height: 42, flexShrink: 0, boxShadow: isPlaying ? '0 0 0 5px rgba(255,255,255,0.1)' : 'none' }}>
+              <Ic d={isPlaying ? 'M6 4h4v16H6zM14 4h4v16h-4z' : 'M5 3l14 9-14 9V3z'} s={13} c="#111" />
+            </button>
 
-          {/* play/pause */}
-          <button className="dp-play" onClick={() => setPlaying(!isPlaying)}
-            style={{ width: 40, height: 40, flexShrink: 0, boxShadow: isPlaying ? '0 0 0 5px rgba(255,255,255,0.1)' : 'none' }}>
-            <Ic d={isPlaying ? 'M6 4h4v16H6zM14 4h4v16h-4z' : 'M5 3l14 9-14 9V3z'} s={13} c="#111" />
-          </button>
+            {queue.length > 1 && queueIndex < queue.length - 1 && (
+              <button className="dp-iBtn sm" onClick={nextTrack}>
+                <Ic d="M5 4l10 8-10 8V4zM19 5v14" s={14} />
+              </button>
+            )}
 
-          {/* expand / collapse */}
-          <button className="dp-iBtn sm" onClick={toggleExpanded}
-            style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform .3s cubic-bezier(0.32,0.72,0,1)' }}>
-            <Ic d="M5 9l7-7 7 7" s={16} />
-          </button>
-
-          {/* close */}
-          <button className="dp-iBtn sm" onClick={close}>
-            <Ic d="M18 6L6 18M6 6l12 12" s={14} />
-          </button>
+            <button className="dp-iBtn sm" onClick={close}>
+              <Ic d="M18 6L6 18M6 6l12 12" s={14} />
+            </button>
+          </div>
         </div>
       </div>
     </>

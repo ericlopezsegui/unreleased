@@ -580,27 +580,51 @@ export default function SetupPage() {
                   Introduce el código
                 </h2>
                 <p style={{ marginTop: 6, fontSize: 14, color: '#aaa' }}>
-                  Tu owner debe haberte pasado un código de 6 caracteres
+                  Tu artista debe haberte pasado un código de 6 caracteres
                 </p>
               </div>
               <form onSubmit={handleJoinSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#aaa', marginBottom: 8 }}>
+                  <label style={{ display: 'block', fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#aaa', marginBottom: 16 }}>
                     Código de invitación
                   </label>
-                  <input
-                    type="text"
-                    placeholder="ABC123"
-                    value={joinCode}
-                    onChange={e => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
-                    className="input-field"
-                    maxLength={6}
-                    autoComplete="off"
-                    style={{ letterSpacing: '0.3em', fontSize: 24, fontWeight: 600 }}
-                  />
+                  {/* 6-box OTP input */}
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <input
+                        key={i} id={`join-box-${i}`} type="text" inputMode="text" maxLength={1}
+                        value={joinCode[i] ?? ''}
+                        autoFocus={i === 0}
+                        onChange={e => {
+                          const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+                          if (!val) return
+                          const arr = joinCode.padEnd(6, ' ').split('')
+                          arr[i] = val[val.length - 1]
+                          setJoinCode(arr.join('').trimEnd())
+                          if (i < 5) document.getElementById(`join-box-${i + 1}`)?.focus()
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Backspace' && !joinCode[i] && i > 0)
+                            document.getElementById(`join-box-${i - 1}`)?.focus()
+                        }}
+                        onPaste={i === 0 ? (e => {
+                          e.preventDefault()
+                          const text = e.clipboardData.getData('text').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+                          setJoinCode(text)
+                          document.getElementById(`join-box-${Math.min(text.length, 5)}`)?.focus()
+                        }) : undefined}
+                        style={{
+                          width: 44, height: 52, textAlign: 'center', fontSize: 20, fontWeight: 500, fontFamily: 'inherit',
+                          border: '1px solid #eee', background: '#fff', outline: 'none', caretColor: '#0f0f0f', transition: 'border-color .15s',
+                        }}
+                        onFocus={e => (e.target.style.borderColor = '#0f0f0f')}
+                        onBlur={e => (e.target.style.borderColor = '#eee')}
+                      />
+                    ))}
+                  </div>
                 </div>
                 {joinError && <p style={{ fontSize: 13, color: '#e53e3e', fontWeight: 500 }}>{joinError}</p>}
-                <button type="submit" className="btn-primary" disabled={joinLoading || joinCode.length < 6}>
+                <button type="submit" className="btn-primary" disabled={joinLoading || joinCode.replace(/[^A-Z0-9]/g, '').length < 6}>
                   {joinLoading ? (
                     <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Verificando...</>
                   ) : 'Unirme al equipo'}

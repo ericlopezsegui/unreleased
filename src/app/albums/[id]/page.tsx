@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
+import { usePlayerStore, type QueueItem } from '@/stores/player-store'
 
 interface Album { id: string; title: string; description: string | null; cover_path: string | null; artist_id: string }
 interface Track { id: string; title: string; position: number | null; updated_at: string }
@@ -22,6 +23,7 @@ export default function AlbumPage() {
   const [tracks, setTracks] = useState<Track[]>([])
   const [coverUrl, setCoverUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [playingIdx, setPlayingIdx] = useState<number | null>(null)
   // Edit state
   const [editing, setEditing] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
@@ -37,6 +39,36 @@ export default function AlbumPage() {
   const id = params.id as string
   const supabase = createClient()
   const { setTitle, setBackHref, setRightActions } = useHeaderContext()
+  const loadQueue = usePlayerStore(s => s.loadQueue)
+
+  const playFromTrack = async (startIndex: number) => {
+    if (playingIdx !== null) return
+    setPlayingIdx(startIndex)
+    try {
+      const results = await Promise.all(tracks.map(async t => {
+        const { data: ver } = await supabase
+          .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', t.id).eq('is_active', true).single()
+        if (!ver?.audio_path) return null
+        const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
+        if (!urlData?.signedUrl) return null
+        return { trackId: t.id, trackTitle: t.title, coverUrl: coverUrl, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id } as QueueItem
+      }))
+      const items = tracks.map((t, idx) => results[idx]).filter((r): r is QueueItem => r !== null)
+      if (!items.length) return
+      // Find the new startIndex after filtering out tracks with no audio
+      let qIdx = 0
+      let counted = 0
+      for (let i = 0; i < tracks.length; i++) {
+        if (results[i] !== null) {
+          if (i === startIndex) { qIdx = counted; break }
+          counted++
+        }
+      }
+      loadQueue(items, qIdx)
+    } finally {
+      setPlayingIdx(null)
+    }
+  }
 
   useEffect(() => {
     ;(async () => {
@@ -161,6 +193,18 @@ export default function AlbumPage() {
             <h1 style={{ fontSize: 24, fontWeight: 200, color: '#0f0f0f', margin: '0 0 6px', letterSpacing: '-0.02em', lineHeight: 1.15 }}>{album?.title}</h1>
             {album?.description && <p style={{ fontSize: 13, color: '#777', lineHeight: 1.55, margin: 0, fontWeight: 300 }}>{album.description}</p>}
             <p style={{ fontSize: 11, color: '#999', margin: '10px 0 0', fontWeight: 400 }}>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</p>
+            {tracks.length > 0 && (
+              <button
+                onClick={() => playFromTrack(0)}
+                disabled={playingIdx !== null}
+                style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 7, background: '#0f0f0f', color: '#fff', border: 'none', cursor: playingIdx !== null ? 'not-allowed' : 'pointer', padding: '8px 16px', borderRadius: 20, fontSize: 12, fontWeight: 500, fontFamily: 'inherit', opacity: playingIdx !== null ? 0.6 : 1, transition: 'opacity .15s' }}
+              >
+                {playingIdx !== null
+                  ? <span style={{ width: 10, height: 10, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                  : <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                Reproducir
+              </button>
+            )}
           </div>
         </div>
 
@@ -180,13 +224,23 @@ export default function AlbumPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {tracks.map((track, i) => (
-                <button key={track.id} onClick={() => router.push(`/tracks/${track.id}`)} className="track-row" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <span style={{ width: 24, fontSize: 12, color: '#999', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{track.position ?? i + 1}</span>
+                <div key={track.id} onClick={() => router.push(`/tracks/${track.id}`)} role="button" tabIndex={0} className="track-row" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); playFromTrack(i) }}
+                    style={{ width: 26, height: 26, borderRadius: '50%', background: playingIdx === i ? 'rgba(0,0,0,0.08)' : 'transparent', border: '1px solid transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#bbb', transition: 'all .15s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; e.currentTarget.style.borderColor = 'rgba(0,0,0,0.08)'; e.currentTarget.style.color = '#555' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = playingIdx === i ? 'rgba(0,0,0,0.08)' : 'transparent'; e.currentTarget.style.borderColor = 'transparent'; e.currentTarget.style.color = '#bbb' }}
+                  >
+                    {playingIdx === i
+                      ? <span style={{ width: 9, height: 9, border: '1.5px solid #ccc', borderTopColor: '#666', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                      : <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                  </button>
+                  <span style={{ width: 20, fontSize: 12, color: '#bbb', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{track.position ?? i + 1}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontSize: 13.5, fontWeight: 500, color: '#0f0f0f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{track.title}</p>
                   </div>
                   <Ic d="M9 18l6-6-6-6" s={13} c="#bbb" />
-                </button>
+                </div>
               ))}
             </div>
           )}

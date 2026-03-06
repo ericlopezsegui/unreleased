@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
+import { usePlayerStore } from '@/stores/player-store'
 
 interface Track {
   id: string
@@ -30,9 +31,26 @@ export default function TracksPage() {
   const [view, setView] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'singles' | 'albums'>('all')
   const [artistId, setArtistId] = useState<string | null>(null)
+  const [playingId, setPlayingId] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
   const { setTitle, setRightActions } = useHeaderContext()
+  const loadQueue = usePlayerStore(s => s.loadQueue)
+
+  const playTrack = async (trackId: string, title: string) => {
+    if (playingId) return
+    setPlayingId(trackId)
+    try {
+      const { data: ver } = await supabase
+        .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', trackId).eq('is_active', true).single()
+      if (!ver?.audio_path) return
+      const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
+      if (!urlData?.signedUrl) return
+      loadQueue([{ trackId, trackTitle: title, coverUrl: coverUrls[trackId] ?? null, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id }], 0)
+    } finally {
+      setPlayingId(null)
+    }
+  }
 
   useEffect(() => {
     setTitle('Tracks')
@@ -189,7 +207,7 @@ export default function TracksPage() {
             ) : view === 'grid' ? (
               <div className="trk-grid">
                 {filtered.map((t, i) => (
-                  <button key={t.id} onClick={() => router.push(`/tracks/${t.id}`)} className="trk-card" style={{ animationDelay: `${i * 0.05}s` }}>
+                  <div key={t.id} onClick={() => router.push(`/tracks/${t.id}`)} role="button" tabIndex={0} className="trk-card" style={{ animationDelay: `${i * 0.05}s` }}>
                     <div className="trk-cover">
                       {coverUrls[t.id]
                         ? <img src={coverUrls[t.id]} alt="" />
@@ -197,18 +215,26 @@ export default function TracksPage() {
                       <span className="trk-badge">
                         {t.album_id ? (t.albums as any)?.title ?? 'Álbum' : 'Single'}
                       </span>
+                      <button
+                        onClick={e => { e.stopPropagation(); playTrack(t.id, t.title) }}
+                        style={{ position: 'absolute', bottom: 8, right: 8, width: 28, height: 28, borderRadius: '50%', background: 'rgba(15,15,15,0.72)', backdropFilter: 'blur(4px)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                      >
+                        {playingId === t.id
+                          ? <span style={{ width: 10, height: 10, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                          : <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                      </button>
                     </div>
                     <div className="trk-body">
                       <span className="trk-title">{t.title}</span>
                       {t.description && <span className="trk-meta">{t.description}</span>}
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
               <div className="trk-list">
                 {filtered.map((t, i) => (
-                  <button key={t.id} onClick={() => router.push(`/tracks/${t.id}`)} className="trk-row" style={{ animationDelay: `${i * 0.03}s` }}>
+                  <div key={t.id} onClick={() => router.push(`/tracks/${t.id}`)} role="button" tabIndex={0} className="trk-row" style={{ animationDelay: `${i * 0.03}s` }}>
                     <div className="trk-row-cover">
                       {coverUrls[t.id]
                         ? <img src={coverUrls[t.id]} alt="" />
@@ -223,10 +249,18 @@ export default function TracksPage() {
                         {t.description && <><span style={{ color: '#e0e0e0' }}>·</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.description}</span></>}
                       </div>
                     </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); playTrack(t.id, t.title) }}
+                      style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.07)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                    >
+                      {playingId === t.id
+                        ? <span style={{ width: 10, height: 10, border: '1.5px solid #ccc', borderTopColor: '#0f0f0f', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                        : <svg width="10" height="10" viewBox="0 0 24 24" fill="#0f0f0f" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                    </button>
                     <div className="trk-row-arrow">
                       <Ic d="M9 18l6-6-6-6" s={14} />
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}

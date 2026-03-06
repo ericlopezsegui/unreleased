@@ -666,6 +666,43 @@ begin
 end;
 $$;
 
+-- Eliminar un miembro (solo owner, no puede eliminar al owner)
+create or replace function public.remove_artist_member(
+  p_artist_id uuid,
+  p_user_id uuid
+)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists(select 1 from public.artists a where a.id = p_artist_id and a.owner_user_id = auth.uid()) then
+    raise exception 'Not authorized';
+  end if;
+  if p_user_id = (select owner_user_id from public.artists where id = p_artist_id) then
+    raise exception 'Cannot remove owner';
+  end if;
+  delete from public.artist_members
+  where artist_id = p_artist_id and user_id = p_user_id;
+end;
+$$;
+
+-- Eliminar un invite (solo owner / creador)
+create or replace function public.delete_artist_invite(
+  p_invite_id uuid
+)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  v_artist_id uuid;
+begin
+  select artist_id into v_artist_id from public.artist_invites where id = p_invite_id;
+  if not found then
+    raise exception 'Invite not found';
+  end if;
+  if not exists(select 1 from public.artists a where a.id = v_artist_id and a.owner_user_id = auth.uid()) then
+    raise exception 'Not authorized';
+  end if;
+  delete from public.artist_invites where id = p_invite_id;
+end;
+$$;
+
 -- Cambiar rol de un miembro (solo owner)
 create or replace function public.set_artist_member_role(
   p_artist_id uuid,

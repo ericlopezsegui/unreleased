@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { QRCodeSVG } from 'qrcode.react'
+import { usePlayerStore, type QueueItem } from '@/stores/player-store'
 
 interface Profile { display_name: string | null; avatar_path: string | null }
 interface Artist { id: string; name: string; handle: string | null; avatar_path: string | null; bio: string | null }
@@ -67,10 +68,14 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
   const [creating, setCreating] = useState<'editor' | 'viewer' | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [opError, setOpError] = useState<string | null>(null)
   const [closing, setClosing] = useState(false)
   const [visible, setVisible] = useState(false)
-
-  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  // IDs currently being deleted
+  const [deletingInvites, setDeletingInvites] = useState<Set<string>>(new Set())
+  const [deletingMembers, setDeletingMembers] = useState<Set<string>>(new Set())
+  // Member pending removal confirmation (user_id)
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
 
   useEffect(() => {
     requestAnimationFrame(() => setVisible(true))
@@ -90,7 +95,6 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
     const memberData = (mRes.data ?? []) as { user_id: string; role: string; created_at: string; display_name: string | null; avatar_path: string | null }[]
 
-    // Generate signed avatar URLs in parallel
     const membersWithData: Member[] = await Promise.all(
       memberData.map(async m => {
         let avatar_url: string | null = null
@@ -113,7 +117,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
     const { data, error } = await supabase.rpc('create_artist_invite', { p_artist_id: artist.id, p_role: role })
 
     if (error) {
-      setInviteError(`Error: ${error.message}`)
+      setInviteError(`Error al crear el código: ${error.message}`)
       setCreating(null)
       return
     }
@@ -126,12 +130,27 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
   }
 
   const deleteInvite = async (id: string) => {
-    await supabase.from('artist_invites').delete().eq('id', id)
+    setDeletingInvites(prev => new Set(prev).add(id))
+    setOpError(null)
+    const { error } = await supabase.rpc('delete_artist_invite', { p_invite_id: id })
+    setDeletingInvites(prev => { const s = new Set(prev); s.delete(id); return s })
+    if (error) {
+      setOpError(`No se pudo eliminar el código: ${error.message}`)
+      return
+    }
     setInvites(prev => prev.filter(i => i.id !== id))
   }
 
   const removeMember = async (userId: string) => {
-    await supabase.from('artist_members').delete().eq('artist_id', artist.id).eq('user_id', userId)
+    setConfirmRemove(null)
+    setDeletingMembers(prev => new Set(prev).add(userId))
+    setOpError(null)
+    const { error } = await supabase.rpc('remove_artist_member', { p_artist_id: artist.id, p_user_id: userId })
+    setDeletingMembers(prev => { const s = new Set(prev); s.delete(userId); return s })
+    if (error) {
+      setOpError(`No se pudo eliminar el miembro: ${error.message}`)
+      return
+    }
     setMembers(prev => prev.filter(m => m.user_id !== userId))
   }
 
@@ -141,7 +160,8 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
     const { error } = await supabase.rpc('set_artist_member_role', {
       p_artist_id: artist.id, p_user_id: userId, p_role: role,
     })
-    if (!error) setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role } : m))
+    if (error) { setOpError(`No se pudo cambiar el rol: ${error.message}`); return }
+    setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role } : m))
   }
 
   const copyCode = (code: string) => {
@@ -183,6 +203,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
     <div onClick={handleClose} style={overlayStyle}>
       <div onClick={e => e.stopPropagation()} style={panelStyle}>
 
+        {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
           <div>
             <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 4px' }}>Equipo</p>
@@ -193,13 +214,26 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
           </button>
         </div>
 
+        {/* Operation error banner */}
+        {opError && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#fff0f0', border: '1px solid #ffd5d5', padding: '10px 14px', marginBottom: 20, gap: 12 }}>
+            <span style={{ fontSize: 12, color: '#c53030' }}>{opError}</span>
+            <button onClick={() => setOpError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c53030', display: 'flex', padding: 2, flexShrink: 0 }}>
+              <Ic n="close" s={12} />
+            </button>
+          </div>
+        )}
+
+        {/* Members */}
         <div style={{ marginBottom: 28 }}>
           <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Miembros</p>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {members.map(m => {
               const initial = (m.display_name ?? '?')[0].toUpperCase()
+              const isDeleting = deletingMembers.has(m.user_id)
+              const isConfirming = confirmRemove === m.user_id
               return (
-                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.03)', animation: 'fadeUp .3s ease both', gap: 8 }}>
+                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.04)', gap: 8, opacity: isDeleting ? 0.4 : 1, transition: 'opacity .2s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                     <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', fontSize: 12, fontWeight: 600, color: '#999' }}>
                       {m.avatar_url
@@ -208,22 +242,42 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
                     </div>
                     <span style={{ fontSize: 13, fontWeight: 500, color: '#0f0f0f', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name ?? 'Usuario'}</span>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+
+                  {/* Role / action area */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                     {isOwner && m.role !== 'owner' ? (
-                      <>
-                        {(['editor', 'viewer'] as const).map(r => (
-                          <button key={r} onClick={() => changeMemberRole(m.user_id, r)}
-                            style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', border: '1px solid', borderColor: m.role === r ? '#0f0f0f' : '#eee', background: m.role === r ? '#0f0f0f' : 'transparent', color: m.role === r ? '#fff' : '#bbb', cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s', borderRadius: 3 }}>
-                            {r === 'editor' ? 'Editor' : 'Lectura'}
+                      isConfirming ? (
+                        /* Inline confirmation */
+                        <>
+                          <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>¿Eliminar?</span>
+                          <button onClick={() => removeMember(m.user_id)}
+                            style={{ padding: '3px 9px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', border: '1px solid #e53e3e', background: '#e53e3e', color: '#fff', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 3 }}>
+                            Sí
                           </button>
-                        ))}
-                        <button onClick={() => removeMember(m.user_id)} title="Eliminar"
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 4, borderRadius: 4, transition: 'color .15s' }}
-                          onMouseEnter={e => { e.currentTarget.style.color = '#e53e3e' }}
-                          onMouseLeave={e => { e.currentTarget.style.color = '#ddd' }}>
-                          <Ic n="close" s={14} />
-                        </button>
-                      </>
+                          <button onClick={() => setConfirmRemove(null)}
+                            style={{ padding: '3px 9px', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', border: '1px solid #eee', background: 'transparent', color: '#aaa', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 3 }}>
+                            No
+                          </button>
+                        </>
+                      ) : (
+                        /* Role toggles + remove button */
+                        <>
+                          {(['editor', 'viewer'] as const).map(r => (
+                            <button key={r} onClick={() => changeMemberRole(m.user_id, r)}
+                              style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', border: '1px solid', borderColor: m.role === r ? '#0f0f0f' : '#eee', background: m.role === r ? '#0f0f0f' : 'transparent', color: m.role === r ? '#fff' : '#bbb', cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s', borderRadius: 3 }}>
+                              {r === 'editor' ? 'Editor' : 'Lectura'}
+                            </button>
+                          ))}
+                          <button onClick={() => setConfirmRemove(m.user_id)} disabled={isDeleting} title="Eliminar miembro"
+                            style={{ background: 'none', border: '1px solid #eee', cursor: 'pointer', color: '#ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 5, borderRadius: 4, transition: 'all .15s', width: 26, height: 26 }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = '#ffd5d5'; e.currentTarget.style.color = '#e53e3e'; e.currentTarget.style.background = '#fff5f5' }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = '#eee'; e.currentTarget.style.color = '#ccc'; e.currentTarget.style.background = 'none' }}>
+                            {isDeleting
+                              ? <span style={{ width: 10, height: 10, border: '1.5px solid #eee', borderTopColor: '#aaa', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                              : <Ic n="close" s={12} />}
+                          </button>
+                        </>
+                      )
                     ) : (
                       <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: m.role === 'owner' ? '#888' : '#c0c0c0' }}>
                         {m.role === 'owner' ? 'Owner' : m.role === 'editor' ? 'Editor' : 'Lectura'}
@@ -236,42 +290,50 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
           </div>
         </div>
 
+        {/* Active invites */}
         <div style={{ marginBottom: 24 }}>
           <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 12px' }}>Invitaciones activas</p>
           {activeInvites.length === 0 ? (
             <p style={{ fontSize: 12, color: '#ddd', padding: '16px 0' }}>No hay códigos activos</p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {activeInvites.map(inv => (
-                <div key={inv.id} style={{ background: '#fff', border: '1px solid #f0f0f0', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: inv.role === 'editor' ? '#0f0f0f' : '#999', padding: '3px 7px', border: '1px solid', borderColor: inv.role === 'editor' ? '#0f0f0f' : '#eee' }}>
-                        {inv.role === 'editor' ? 'Editor' : 'Solo lectura'}
-                      </span>
-                      <span style={{ fontSize: 11, color: '#ccc' }}>· expira {new Date(inv.expires_at).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
+              {activeInvites.map(inv => {
+                const isDel = deletingInvites.has(inv.id)
+                return (
+                  <div key={inv.id} style={{ background: '#fff', border: '1px solid #f0f0f0', overflow: 'hidden', opacity: isDel ? 0.5 : 1, transition: 'opacity .2s' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: inv.role === 'editor' ? '#0f0f0f' : '#999', padding: '3px 7px', border: '1px solid', borderColor: inv.role === 'editor' ? '#0f0f0f' : '#eee' }}>
+                          {inv.role === 'editor' ? 'Editor' : 'Solo lectura'}
+                        </span>
+                        <span style={{ fontSize: 11, color: '#ccc' }}>· expira {new Date(inv.expires_at).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
+                      </div>
+                      <button onClick={() => deleteInvite(inv.id)} disabled={isDel} title="Revocar código"
+                        style={{ background: 'none', border: '1px solid #eee', cursor: isDel ? 'not-allowed' : 'pointer', color: '#ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 5, borderRadius: 4, width: 26, height: 26, transition: 'all .15s' }}
+                        onMouseEnter={e => { if (!isDel) { e.currentTarget.style.borderColor = '#ffd5d5'; e.currentTarget.style.color = '#e53e3e'; e.currentTarget.style.background = '#fff5f5' } }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#eee'; e.currentTarget.style.color = '#ccc'; e.currentTarget.style.background = 'none' }}>
+                        {isDel
+                          ? <span style={{ width: 10, height: 10, border: '1.5px solid #eee', borderTopColor: '#aaa', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                          : <Ic n="close" s={12} />}
+                      </button>
                     </div>
-                    <button onClick={() => deleteInvite(inv.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ddd', display: 'flex', padding: 4, transition: 'color .15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = '#999')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#ddd')}>
-                      <Ic n="close" s={13} />
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, margin: '12px 14px 14px' }}>
-                    <div style={{ flex: 1, background: '#f8f8f8', border: '1px solid #f0f0f0', padding: '14px', textAlign: 'center', borderRadius: '2px 0 0 2px' }}>
-                      <span style={{ fontSize: 24, fontWeight: 700, letterSpacing: '0.28em', fontFamily: 'monospace', color: '#0f0f0f' }}>{inv.token}</span>
+                    <div style={{ display: 'flex', alignItems: 'stretch', gap: 0, margin: '12px 14px 14px' }}>
+                      <div style={{ flex: 1, background: '#f8f8f8', border: '1px solid #f0f0f0', padding: '14px', textAlign: 'center', borderRadius: '2px 0 0 2px' }}>
+                        <span style={{ fontSize: 24, fontWeight: 700, letterSpacing: '0.28em', fontFamily: 'monospace', color: '#0f0f0f' }}>{inv.token}</span>
+                      </div>
+                      <button onClick={() => copyCode(inv.token)}
+                        style={{ padding: '0 16px', background: copied === inv.token ? '#0f0f0f' : '#fff', border: '1px solid', borderLeft: 'none', borderColor: copied === inv.token ? '#0f0f0f' : '#f0f0f0', cursor: 'pointer', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: copied === inv.token ? '#fff' : '#999', fontFamily: 'inherit', transition: 'all .15s', flexShrink: 0, borderRadius: '0 2px 2px 0', minWidth: 64 }}>
+                        {copied === inv.token ? '✓' : 'Copiar'}
+                      </button>
                     </div>
-                    <button onClick={() => copyCode(inv.token)}
-                      style={{ padding: '0 16px', background: copied === inv.token ? '#0f0f0f' : '#fff', border: '1px solid', borderLeft: 'none', borderColor: copied === inv.token ? '#0f0f0f' : '#f0f0f0', cursor: 'pointer', fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: copied === inv.token ? '#fff' : '#999', fontFamily: 'inherit', transition: 'all .15s', flexShrink: 0, borderRadius: '0 2px 2px 0', minWidth: 64 }}>
-                      {copied === inv.token ? '✓' : 'Copiar'}
-                    </button>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
 
+        {/* Generate invite */}
         <div>
           <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 10px' }}>Generar código de invitación</p>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -310,10 +372,58 @@ export default function HomePage() {
   const [trackCount, setTrackCount] = useState(0)
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [recentView, setRecentView] = useState<'grid' | 'list'>('grid')
+  const [playingId, setPlayingId] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
   const heroRef = useRef<HTMLElement>(null)
   const { setRightActions, setMiniInfo } = useHeaderContext()
+  const loadQueue = usePlayerStore(s => s.loadQueue)
+
+  const playTrack = async (item: RecentItem) => {
+    if (playingId) return
+    setPlayingId(item.id)
+    try {
+      const { data: ver } = await supabase
+        .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', item.id).eq('is_active', true).single()
+      if (!ver?.audio_path) return
+      const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
+      if (!urlData?.signedUrl) return
+      loadQueue([{ trackId: item.id, trackTitle: item.title, coverUrl: coverUrls[item.id] ?? null, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id }], 0)
+    } finally {
+      setPlayingId(null)
+    }
+  }
+
+  const playAlbum = async (item: RecentItem) => {
+    if (playingId) return
+    setPlayingId(item.id)
+    try {
+      const { data: tracks } = await supabase
+        .from('tracks').select('id,title,cover_path').eq('album_id', item.id)
+        .order('position', { ascending: true, nullsFirst: false })
+      if (!tracks?.length) return
+      const items: QueueItem[] = []
+      await Promise.all(tracks.map(async t => {
+        const { data: ver } = await supabase
+          .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', t.id).eq('is_active', true).single()
+        if (!ver?.audio_path) return
+        const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
+        if (!urlData?.signedUrl) return
+        const coverPath = t.cover_path || item.cover_path
+        let tCoverUrl: string | null = coverUrls[item.id] ?? null
+        if (t.cover_path) {
+          const { data: cu } = await supabase.storage.from('covers').createSignedUrl(t.cover_path, 3600)
+          tCoverUrl = cu?.signedUrl ?? null
+        }
+        items.push({ trackId: t.id, trackTitle: t.title, coverUrl: tCoverUrl, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id })
+      }))
+      // Sort by original track order
+      const orderedItems = tracks.map(t => items.find(qi => qi.trackId === t.id)).filter(Boolean) as QueueItem[]
+      if (orderedItems.length) loadQueue(orderedItems, 0)
+    } finally {
+      setPlayingId(null)
+    }
+  }
 
   useEffect(() => {
     ;(async () => {
@@ -504,9 +614,11 @@ export default function HomePage() {
             {recentView === 'grid' ? (
               <div className="recent-grid">
                 {recent.map((item, i) => (
-                  <button
+                  <div
                     key={item.id}
                     className="rc"
+                    role="button"
+                    tabIndex={0}
                     style={{ animationDelay: `${i * 0.06}s` }}
                     onClick={() => router.push(item.type === 'album' ? `/albums/${item.id}` : `/tracks/${item.id}`)}
                   >
@@ -521,6 +633,14 @@ export default function HomePage() {
                       <span className={`rc-badge ${item.type}`}>
                         {item.type === 'album' ? 'Álbum' : 'Track'}
                       </span>
+                      <button
+                        onClick={e => { e.stopPropagation(); item.type === 'track' ? playTrack(item) : playAlbum(item) }}
+                        style={{ position: 'absolute', bottom: 8, right: 8, width: 28, height: 28, borderRadius: '50%', background: 'rgba(15,15,15,0.72)', backdropFilter: 'blur(4px)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}
+                      >
+                        {playingId === item.id
+                          ? <span style={{ width: 10, height: 10, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                          : <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                      </button>
                     </div>
                     <div className="rc-body">
                       <span className="rc-title">{item.title}</span>
@@ -534,15 +654,17 @@ export default function HomePage() {
                         <TimeAgo date={item.updated_at} />
                       </span>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             ) : (
               <div className="recent-list">
                 {recent.map((item, i) => (
-                  <button
+                  <div
                     key={item.id}
                     className="rl"
+                    role="button"
+                    tabIndex={0}
                     style={{ animationDelay: `${i * 0.04}s` }}
                     onClick={() => router.push(item.type === 'album' ? `/albums/${item.id}` : `/tracks/${item.id}`)}
                   >
@@ -568,7 +690,15 @@ export default function HomePage() {
                       </span>
                     </div>
                     <span className="rl-time"><TimeAgo date={item.updated_at} /></span>
-                  </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); item.type === 'track' ? playTrack(item) : playAlbum(item) }}
+                      style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.07)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                    >
+                      {playingId === item.id
+                        ? <span style={{ width: 10, height: 10, border: '1.5px solid #ccc', borderTopColor: '#0f0f0f', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
+                        : <svg width="10" height="10" viewBox="0 0 24 24" fill="#0f0f0f" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

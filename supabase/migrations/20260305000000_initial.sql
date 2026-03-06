@@ -39,7 +39,43 @@ BEGIN
 END;
 $$;
 
--- 3) Ensure SECURITY DEFINER helpers exist (needed for storage policies)
+-- 4) Add remove_artist_member RPC
+CREATE OR REPLACE FUNCTION public.remove_artist_member(
+  p_artist_id uuid,
+  p_user_id uuid
+)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NOT EXISTS(SELECT 1 FROM public.artists a WHERE a.id = p_artist_id AND a.owner_user_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Not authorized';
+  END IF;
+  IF p_user_id = (SELECT owner_user_id FROM public.artists WHERE id = p_artist_id) THEN
+    RAISE EXCEPTION 'Cannot remove owner';
+  END IF;
+  DELETE FROM public.artist_members
+  WHERE artist_id = p_artist_id AND user_id = p_user_id;
+END;
+$$;
+
+-- 5) Add delete_artist_invite RPC
+CREATE OR REPLACE FUNCTION public.delete_artist_invite(
+  p_invite_id uuid
+)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_artist_id uuid;
+BEGIN
+  SELECT artist_id INTO v_artist_id FROM public.artist_invites WHERE id = p_invite_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Invite not found';
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM public.artists a WHERE a.id = v_artist_id AND a.owner_user_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Not authorized';
+  END IF;
+  DELETE FROM public.artist_invites WHERE id = p_invite_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.is_artist_owner(aid uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS(SELECT 1 FROM public.artists a WHERE a.id = aid AND a.owner_user_id = auth.uid());
