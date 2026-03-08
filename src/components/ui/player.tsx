@@ -387,16 +387,22 @@ export function Player() {
   } = usePlayerStore()
 
   const audioRef = useRef<HTMLAudioElement>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const bassRef = useRef<BiquadFilterNode | null>(null)
+  const midRef = useRef<BiquadFilterNode | null>(null)
+  const trebleRef = useRef<BiquadFilterNode | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [appear, setAppear] = useState(false)
   const [panelVisible, setPanelVisible] = useState(false)
   const [tab, setTab] = useState<Tab>('versions')
-  const [volume, setVolumeState] = useState(1)
   const [rate, setRateState] = useState(1)
+  const [pitch, setPitchState] = useState(0)
   const [eqBass, setEqBass] = useState(0)
   const [eqMid, setEqMid] = useState(0)
   const [eqTreble, setEqTreble] = useState(0)
+  // true after EQ graph is wired up
+  const [eqActive, setEqActive] = useState(false)
 
   const currentVer = versions.find(v => v.id === currentVersionId)
   const audioUrl = currentVer?.audioUrl ?? null
@@ -418,17 +424,64 @@ export function Player() {
     }
   }, [isExpanded])
 
-  /* sync play/pause */
+  /* ── Activate EQ ──
+     Called from a real user-gesture handler (button click).
+     Creates AudioContext + BiquadFilters and wires them into the <audio>
+     element. Once done, audio routes: element → bass → mid → treble → speakers.
+     Before activation, audio goes straight to speakers (no Web Audio). */
+  const activateEq = useCallback(() => {
+    const a = audioRef.current
+    if (!a || audioCtxRef.current) return
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+    audioCtxRef.current = ctx
+    const src = ctx.createMediaElementSource(a)
+    const bass = ctx.createBiquadFilter()
+    bass.type = 'lowshelf'; bass.frequency.value = 200; bass.gain.value = eqBass
+    bassRef.current = bass
+    const mid = ctx.createBiquadFilter()
+    mid.type = 'peaking'; mid.frequency.value = 1000; mid.Q.value = 1; mid.gain.value = eqMid
+    midRef.current = mid
+    const treble = ctx.createBiquadFilter()
+    treble.type = 'highshelf'; treble.frequency.value = 8000; treble.gain.value = eqTreble
+    trebleRef.current = treble
+    src.connect(bass).connect(mid).connect(treble).connect(ctx.destination)
+    if (ctx.state === 'suspended') ctx.resume()
+    setEqActive(true)
+  }, [eqBass, eqMid, eqTreble])
+
+  /* ── Play / Pause sync ── */
   useEffect(() => {
     const a = audioRef.current
     if (!a) return
-    if (isPlaying) a.play().catch(() => setPlaying(false))
-    else a.pause()
+    if (isPlaying) {
+      if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume()
+      a.play().catch(() => setPlaying(false))
+    } else {
+      a.pause()
+    }
   }, [isPlaying])
 
-  /* volume + rate */
-  useEffect(() => { if (audioRef.current) audioRef.current.volume = volume }, [volume])
-  useEffect(() => { if (audioRef.current) audioRef.current.playbackRate = rate }, [rate])
+  /* ── Rate + Pitch ── */
+  useEffect(() => {
+    const a = audioRef.current
+    if (!a) return
+    if (pitch !== 0) {
+      a.preservesPitch = false
+      ;(a as any).mozPreservesPitch = false
+      ;(a as any).webkitPreservesPitch = false
+      a.playbackRate = rate * Math.pow(2, pitch / 12)
+    } else {
+      a.preservesPitch = true
+      ;(a as any).mozPreservesPitch = true
+      ;(a as any).webkitPreservesPitch = true
+      a.playbackRate = rate
+    }
+  }, [rate, pitch])
+
+  /* ── EQ gain updates (only if graph exists) ── */
+  useEffect(() => { if (bassRef.current) bassRef.current.gain.value = eqBass }, [eqBass])
+  useEffect(() => { if (midRef.current) midRef.current.gain.value = eqMid }, [eqMid])
+  useEffect(() => { if (trebleRef.current) trebleRef.current.gain.value = eqTreble }, [eqTreble])
 
   const seek = (p: number) => {
     const a = audioRef.current
@@ -454,8 +507,23 @@ export function Player() {
       <audio
         ref={audioRef}
         src={audioUrl ?? undefined}
+        crossOrigin="anonymous"
         onTimeUpdate={() => { if (audioRef.current) setCurrentTime(audioRef.current.currentTime) }}
-        onLoadedMetadata={() => { if (audioRef.current) { setDuration(audioRef.current.duration); audioRef.current.volume = volume; audioRef.current.playbackRate = rate; audioRef.current.play().catch(() => {}) } }}
+        onLoadedMetadata={() => {
+          const a = audioRef.current
+          if (!a) return
+          setDuration(a.duration)
+          if (pitch !== 0) {
+            a.preservesPitch = false
+            ;(a as any).mozPreservesPitch = false
+            ;(a as any).webkitPreservesPitch = false
+            a.playbackRate = rate * Math.pow(2, pitch / 12)
+          } else {
+            a.playbackRate = rate
+          }
+          if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume()
+          a.play().catch(() => {})
+        }}
         onEnded={() => {
           if (queueIndex < queue.length - 1) {
             nextTrack()
@@ -464,8 +532,6 @@ export function Player() {
             setCurrentTime(0)
           }
         }}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
         style={{ display: 'none' }}
       />
 
@@ -625,18 +691,25 @@ export function Player() {
                 {/* ── CONTROLS ── */}
                 {tab === 'controls' && (
                   <div className="dp-panel-enter">
-                    <p className="dp-sec">Volumen</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
-                      <Ic d="M11 5L6 9H2v6h4l5 4V5z" s={16} c="rgba(255,255,255,0.3)" />
-                      <input type="range" min={0} max={1} step={0.01} value={volume}
-                        onChange={e => setVolumeState(parseFloat(e.target.value))}
+                    <p className="dp-sec">Pitch <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: 'none', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>· semitonos</span></p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8 }}>
+                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 28, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>-12</span>
+                      <input type="range" min={-12} max={12} step={1} value={pitch}
+                        onChange={e => setPitchState(parseInt(e.target.value))}
                         onTouchStart={e => e.stopPropagation()}
                         className="dp-range"
-                        style={{ background: `linear-gradient(to right,rgba(255,255,255,0.78) ${volume*100}%,rgba(255,255,255,0.1) ${volume*100}%)` }} />
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', width: 34, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                        {Math.round(volume * 100)}%
-                      </span>
+                        style={{ background: `linear-gradient(to right, rgba(255,255,255,0.1) ${(pitch+12)/24*100}%, rgba(255,255,255,0.78) ${(pitch+12)/24*100}%)` }} />
+                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 28, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>+12</span>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+                      <span style={{ fontSize: 12, color: pitch !== 0 ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)', fontVariantNumeric: 'tabular-nums' }}>
+                        {pitch > 0 ? `+${pitch}` : pitch} st
+                      </span>
+                      {pitch !== 0 && (
+                        <button onClick={() => setPitchState(0)} style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.07)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 6 }}>Reset</button>
+                      )}
+                    </div>
+
                     <p className="dp-sec">Velocidad</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8 }}>
                       <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 28, textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>0.5×</span>
@@ -653,33 +726,74 @@ export function Player() {
                         <button onClick={() => setRateState(1)} style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.07)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 6 }}>Reset</button>
                       )}
                     </div>
-                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.16)', marginTop: 10 }}>Preservación de pitch — próximamente</p>
+                    {pitch !== 0 && (
+                      <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.22)', marginTop: 12 }}>
+                        Velocidad efectiva: {(rate * Math.pow(2, pitch / 12)).toFixed(2)}× (velocidad + pitch combinados)
+                      </p>
+                    )}
                   </div>
                 )}
 
                 {/* ── EQ ── */}
                 {tab === 'eq' && (
                   <div className="dp-panel-enter">
-                    <p className="dp-sec">Ecualizador de 3 bandas <span style={{ fontWeight: 400, letterSpacing: 0, textTransform: 'none', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>· WebAudio — próximamente</span></p>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
-                      {([['Graves', eqBass, setEqBass], ['Medios', eqMid, setEqMid], ['Agudos', eqTreble, setEqTreble]] as [string, number, (v: number) => void][]).map(([label, val, set]) => (
-                        <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{label}</span>
-                          <div style={{ height: 88, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <input type="range" min={-12} max={12} step={1} value={val}
-                              onChange={e => set(parseInt(e.target.value))}
-                              onTouchStart={e => e.stopPropagation()}
-                              className="dp-range"
-                              style={{ width: 88, transform: 'rotate(-90deg)', transformOrigin: 'center',
-                                background: `linear-gradient(to right, rgba(255,255,255,0.1) ${(val+12)/24*100}%, rgba(255,255,255,0.78) ${(val+12)/24*100}%, rgba(255,255,255,0.1) ${(val+12)/24*100}%)` }} />
-                          </div>
-                          <span style={{ fontSize: 11, color: val !== 0 ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)', fontVariantNumeric: 'tabular-nums' }}>
-                            {val > 0 ? `+${val}` : val} dB
-                          </span>
+                    {!eqActive ? (
+                      /* EQ not yet wired — show activation button */
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, padding: '24px 0' }}>
+                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', margin: 0, textAlign: 'center', lineHeight: 1.5 }}>
+                          El ecualizador necesita activar el procesamiento de audio.<br />
+                          Pulsa el botón para habilitarlo.
+                        </p>
+                        <button
+                          onClick={activateEq}
+                          style={{
+                            fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+                            color: '#111', background: '#fff', border: 'none',
+                            padding: '12px 28px', borderRadius: 10, cursor: 'pointer',
+                          }}
+                        >Activar EQ</button>
+                      </div>
+                    ) : (
+                      /* EQ active — show sliders */
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                          <p className="dp-sec" style={{ margin: 0 }}>Ecualizador 3 bandas</p>
+                          {(eqBass !== 0 || eqMid !== 0 || eqTreble !== 0) && (
+                            <button onClick={() => { setEqBass(0); setEqMid(0); setEqTreble(0) }} style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.07)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 6 }}>Reset</button>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', marginTop: 8 }}>La ecualización se conectará al grafo de WebAudio en una próxima actualización.</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
+                          {[
+                            { label: 'Graves', freq: '200 Hz', val: eqBass, set: setEqBass },
+                            { label: 'Medios', freq: '1 kHz',  val: eqMid,   set: setEqMid },
+                            { label: 'Agudos', freq: '8 kHz',  val: eqTreble, set: setEqTreble },
+                          ].map(({ label, freq, val, set }) => {
+                            const pct = (val + 12) / 24 * 100
+                            const bg = val > 0
+                              ? `linear-gradient(to right, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.75) 50%, rgba(255,255,255,0.75) ${pct}%, rgba(255,255,255,0.1) ${pct}%)`
+                              : val < 0
+                              ? `linear-gradient(to right, rgba(255,255,255,0.1) ${pct}%, rgba(255,255,255,0.75) ${pct}%, rgba(255,255,255,0.75) 50%, rgba(255,255,255,0.1) 50%)`
+                              : 'rgba(255,255,255,0.1)'
+                            return (
+                              <div key={label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>{label}</span>
+                                <div style={{ height: 88, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <input type="range" min={-12} max={12} step={1} value={val}
+                                    onChange={e => set(parseInt(e.target.value))}
+                                    onTouchStart={e => e.stopPropagation()}
+                                    className="dp-range"
+                                    style={{ width: 88, transform: 'rotate(-90deg)', transformOrigin: 'center', background: bg }} />
+                                </div>
+                                <span style={{ fontSize: 11, color: val !== 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)', fontVariantNumeric: 'tabular-nums' }}>
+                                  {val > 0 ? `+${val}` : val} dB
+                                </span>
+                                <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.2)', marginTop: -4 }}>{freq}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
