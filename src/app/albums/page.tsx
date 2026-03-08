@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { usePlayerStore, type QueueItem } from '@/stores/player-store'
-
-interface Album { id: string; title: string; description: string | null; cover_path: string | null; is_archived: boolean; updated_at: string; track_count?: number }
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 function Ic({ d, s = 16 }: { d: string | string[]; s?: number }) {
   const paths = Array.isArray(d) ? d : [d]
@@ -18,10 +17,14 @@ function Ic({ d, s = 16 }: { d: string | string[]; s?: number }) {
 }
 
 export default function AlbumsPage() {
-  const [albums, setAlbums] = useState<Album[]>([])
-  const [loading, setLoading] = useState(true)
-  const [artistId, setArtistId] = useState<string | null>(null)
-  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
+  const albums = usePrefetchStore(s => s.albums)
+  const coverUrls = usePrefetchStore(s => s.coverUrls)
+  const artistId = usePrefetchStore(s => s.artistId)
+  const ready = usePrefetchStore(s => s.ready)
+  const versions = usePrefetchStore(s => s.versions)
+  const tracks = usePrefetchStore(s => s.tracks)
+  const audioUrls = usePrefetchStore(s => s.audioUrls)
+
   const [albumsView, setAlbumsView] = useState<'grid' | 'list'>('grid')
   const [playingId, setPlayingId] = useState<string | null>(null)
   const router = useRouter()
@@ -33,25 +36,24 @@ export default function AlbumsPage() {
     if (playingId) return
     setPlayingId(albumId)
     try {
-      const { data: tracks } = await supabase
-        .from('tracks').select('id,title,cover_path').eq('album_id', albumId)
-        .order('position', { ascending: true, nullsFirst: false })
-      if (!tracks?.length) return
+      // Use prefetched data
+      const albumTracks = tracks.filter(t => t.album_id === albumId).sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+      if (!albumTracks.length) return
       const albumCoverUrl = coverUrls[albumId] ?? null
-      const results = await Promise.all(tracks.map(async t => {
-        const { data: ver } = await supabase
-          .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', t.id).eq('is_active', true).single()
-        if (!ver?.audio_path) return null
-        const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
-        if (!urlData?.signedUrl) return null
-        let tCoverUrl = albumCoverUrl
-        if (t.cover_path) {
-          const { data: cu } = await supabase.storage.from('covers').createSignedUrl(t.cover_path, 3600)
-          tCoverUrl = cu?.signedUrl ?? albumCoverUrl
+
+      const items: QueueItem[] = []
+      for (const t of albumTracks) {
+        const activeVer = versions.find(v => v.track_id === t.id && v.is_active)
+        if (!activeVer?.audio_path) continue
+        let audioUrl = audioUrls[activeVer.id]
+        if (!audioUrl) {
+          const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(activeVer.audio_path, 3600)
+          if (!urlData?.signedUrl) continue
+          audioUrl = urlData.signedUrl
         }
-        return { trackId: t.id, trackTitle: t.title, coverUrl: tCoverUrl, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id } as QueueItem
-      }))
-      const items = tracks.map(t => results.find((r): r is QueueItem => r?.trackId === t.id) ?? null).filter((r): r is QueueItem => r !== null)
+        const tCoverUrl = coverUrls[t.id] ?? albumCoverUrl
+        items.push({ trackId: t.id, trackTitle: t.title, coverUrl: tCoverUrl, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id })
+      }
       if (items.length) loadQueue(items, 0)
     } finally {
       setPlayingId(null)
@@ -69,50 +71,7 @@ export default function AlbumsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    ;(async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-
-      const { data: membership } = await supabase
-        .from('artist_members').select('artist_id').eq('user_id', user.id).limit(1).single()
-      if (!membership) { router.push('/home'); return }
-
-      setArtistId(membership.artist_id)
-
-      const { data } = await supabase
-        .from('albums')
-        .select('id,title,description,cover_path,is_archived,updated_at')
-        .eq('artist_id', membership.artist_id)
-        .order('updated_at', { ascending: false })
-
-      const albumList = (data ?? []) as Album[]
-
-      // Contar tracks por álbum
-      if (albumList.length) {
-        const { data: trackData } = await supabase
-          .from('tracks').select('album_id').eq('artist_id', membership.artist_id).not('album_id', 'is', null)
-        const countMap: Record<string, number> = {}
-        ;(trackData ?? []).forEach((t: any) => { countMap[t.album_id] = (countMap[t.album_id] ?? 0) + 1 })
-        albumList.forEach(a => { a.track_count = countMap[a.id] ?? 0 })
-      }
-
-      setAlbums(albumList)
-
-      // Signed URLs para portadas
-      const urls: Record<string, string> = {}
-      for (const a of albumList) {
-        if (a.cover_path) {
-          const { data: u } = await supabase.storage.from('covers').createSignedUrl(a.cover_path, 3600)
-          if (u?.signedUrl) urls[a.id] = u.signedUrl
-        }
-      }
-      setCoverUrls(urls)
-      setLoading(false)
-    })()
-  }, [])
-
-  if (loading) return (
+  if (!ready) return (
     <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
       <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>

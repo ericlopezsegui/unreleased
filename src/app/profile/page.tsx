@@ -4,9 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
-
-interface Profile { display_name: string | null; avatar_path: string | null; theme: string }
-interface Artist { id: string; name: string; handle: string | null; avatar_path: string | null; bio: string | null }
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 const ico: Record<string, string[]> = {
   logout: ['M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4','M16 17l5-5-5-5','M21 12H9'],
@@ -25,12 +23,12 @@ function Ic({ n, s = 16, c = 'currentColor' }: { n: string; s?: number; c?: stri
 }
 
 export default function ProfilePage() {
-  const [loading, setLoading] = useState(true)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [artist, setArtist] = useState<Artist | null>(null)
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
-  const [artistAvatarUrl, setArtistAvatarUrl] = useState<string | null>(null)
-  const [email, setEmail] = useState<string | null>(null)
+  const ready = usePrefetchStore(s => s.ready)
+  const storeProfile = usePrefetchStore(s => s.profile)
+  const storeArtist = usePrefetchStore(s => s.artist)
+  const storeAvatarUrl = usePrefetchStore(s => s.avatarUrl)
+  const storeArtistAvatarUrl = usePrefetchStore(s => s.artistAvatarUrl)
+  const storeEmail = usePrefetchStore(s => s.email)
 
   // Edit states
   const [editName, setEditName] = useState('')
@@ -52,41 +50,16 @@ export default function ProfilePage() {
     return () => { setTitle('') }
   }, [])
 
+  // Populate edit fields from store
   useEffect(() => {
-    ;(async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-      setEmail(user.email ?? null)
-
-      const pRes = await supabase.from('profiles').select('display_name,avatar_path,theme').eq('user_id', user.id).single()
-      const p = pRes.data as Profile | null
-      setProfile(p)
-      setEditName(p?.display_name ?? '')
-
-      if (p?.avatar_path) {
-        const { data } = await supabase.storage.from('avatars').createSignedUrl(p.avatar_path, 86400)
-        if (data?.signedUrl) setAvatarUrl(data.signedUrl)
-      }
-
-      const { data: membership } = await supabase
-        .from('artist_members').select('artist_id').eq('user_id', user.id).order('created_at').limit(1).single()
-
-      if (membership) {
-        const { data: artistData } = await supabase.from('artists').select('id,name,handle,avatar_path,bio').eq('id', membership.artist_id).single()
-        const a = artistData as Artist | null
-        setArtist(a)
-        setEditArtistName(a?.name ?? '')
-        setEditHandle(a?.handle ?? '')
-        setEditBio(a?.bio ?? '')
-        if (a?.avatar_path) {
-          const { data: d } = await supabase.storage.from('avatars').createSignedUrl(a.avatar_path, 86400)
-          if (d?.signedUrl) setArtistAvatarUrl(d.signedUrl)
-        }
-      }
-
-      setLoading(false)
-    })()
-  }, [])
+    if (!ready) return
+    setEditName(storeProfile?.display_name ?? '')
+    if (storeArtist) {
+      setEditArtistName(storeArtist.name ?? '')
+      setEditHandle(storeArtist.handle ?? '')
+      setEditBio(storeArtist.bio ?? '')
+    }
+  }, [ready, storeProfile, storeArtist])
 
   const signOut = async () => { await supabase.auth.signOut(); router.push('/login') }
 
@@ -102,7 +75,7 @@ export default function ProfilePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    let newAvatarPath = profile?.avatar_path ?? null
+    let newAvatarPath = storeProfile?.avatar_path ?? null
     if (avatarFile) {
       const ext = avatarFile.name.split('.').pop() ?? 'jpg'
       const path = `user/${user.id}/avatar-${Date.now()}.${ext}`
@@ -115,12 +88,16 @@ export default function ProfilePage() {
       avatar_path: newAvatarPath,
     }).eq('user_id', user.id)
 
-    if (artist) {
+    usePrefetchStore.getState().setProfile({ display_name: editName.trim() || null, avatar_path: newAvatarPath })
+    if (avatarFile && avatarPreview) usePrefetchStore.getState().setAvatarUrl(avatarPreview)
+
+    if (storeArtist) {
       await supabase.from('artists').update({
-        name: editArtistName.trim() || artist.name,
+        name: editArtistName.trim() || storeArtist.name,
         handle: editHandle.trim() || null,
         bio: editBio.trim() || null,
-      }).eq('id', artist.id)
+      }).eq('id', storeArtist.id)
+      usePrefetchStore.getState().setArtist({ name: editArtistName.trim() || storeArtist.name, handle: editHandle.trim() || null, bio: editBio.trim() || null })
     }
 
     setSaving(false)
@@ -128,15 +105,15 @@ export default function ProfilePage() {
     setTimeout(() => setSaved(false), 2000)
   }
 
-  if (loading) return (
+  if (!ready) return (
     <div className="prof-loader-wrap">
       <div className="prof-loader" />
       <style>{profileStyles}</style>
     </div>
   )
 
-  const displayAvatar = avatarPreview ?? avatarUrl ?? artistAvatarUrl
-  const initial = (editName || profile?.display_name || '?')[0].toUpperCase()
+  const displayAvatar = avatarPreview ?? storeAvatarUrl ?? storeArtistAvatarUrl
+  const initial = (editName || storeProfile?.display_name || '?')[0].toUpperCase()
 
   return (
     <div className="prof-page">
@@ -156,7 +133,7 @@ export default function ProfilePage() {
         </div>
         <input ref={avatarRef} type="file" accept="image/*" onChange={handleAvatarChange} style={{ display: 'none' }} />
         <h2 className="prof-display-name">{editName || 'Tu nombre'}</h2>
-        {email && <p className="prof-email">{email}</p>}
+        {storeEmail && <p className="prof-email">{storeEmail}</p>}
       </section>
 
       {/* ── Personal info ── */}
@@ -168,12 +145,12 @@ export default function ProfilePage() {
         </div>
         <div className="prof-field">
           <label className="prof-field-label">Email</label>
-          <div className="prof-field-static">{email ?? '—'}</div>
+          <div className="prof-field-static">{storeEmail ?? '—'}</div>
         </div>
       </section>
 
       {/* ── Artist info ── */}
-      {artist && (
+      {storeArtist && (
         <section className="prof-section">
           <p className="prof-section-label">Artista</p>
           <div className="prof-field">

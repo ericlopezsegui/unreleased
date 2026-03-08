@@ -5,16 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { usePlayerStore } from '@/stores/player-store'
-
-interface Track {
-  id: string
-  title: string
-  description: string | null
-  cover_path: string | null
-  album_id: string | null
-  updated_at: string
-  albums: { title: string; cover_path: string | null } | null
-}
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: number; c?: string }) {
   return (
@@ -25,12 +16,15 @@ function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: numbe
 }
 
 export default function TracksPage() {
-  const [tracks, setTracks] = useState<Track[]>([])
-  const [loading, setLoading] = useState(true)
-  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
+  const tracks = usePrefetchStore(s => s.tracks)
+  const coverUrls = usePrefetchStore(s => s.coverUrls)
+  const artistId = usePrefetchStore(s => s.artistId)
+  const ready = usePrefetchStore(s => s.ready)
+  const allVersions = usePrefetchStore(s => s.versions)
+  const audioUrls = usePrefetchStore(s => s.audioUrls)
+
   const [view, setView] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'singles' | 'albums'>('all')
-  const [artistId, setArtistId] = useState<string | null>(null)
   const [playingId, setPlayingId] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
@@ -41,12 +35,15 @@ export default function TracksPage() {
     if (playingId) return
     setPlayingId(trackId)
     try {
-      const { data: ver } = await supabase
-        .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', trackId).eq('is_active', true).single()
-      if (!ver?.audio_path) return
-      const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
-      if (!urlData?.signedUrl) return
-      loadQueue([{ trackId, trackTitle: title, coverUrl: coverUrls[trackId] ?? null, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id }], 0)
+      const activeVer = allVersions.find(v => v.track_id === trackId && v.is_active)
+      if (!activeVer?.audio_path) return
+      let audioUrl = audioUrls[activeVer.id]
+      if (!audioUrl) {
+        const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(activeVer.audio_path, 3600)
+        if (!urlData?.signedUrl) return
+        audioUrl = urlData.signedUrl
+      }
+      loadQueue([{ trackId, trackTitle: title, coverUrl: coverUrls[trackId] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id }], 0)
     } finally {
       setPlayingId(null)
     }
@@ -63,41 +60,7 @@ export default function TracksPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artistId])
 
-  useEffect(() => {
-    ;(async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-
-      const { data: membership } = await supabase
-        .from('artist_members').select('artist_id').eq('user_id', user.id).limit(1).single()
-      if (!membership) { router.push('/home'); return }
-
-      setArtistId(membership.artist_id)
-
-      const { data } = await supabase
-        .from('tracks')
-        .select('id,title,description,cover_path,album_id,updated_at,albums(title,cover_path)')
-        .eq('artist_id', membership.artist_id)
-        .order('updated_at', { ascending: false })
-
-      const list = (data ?? []) as unknown as Track[]
-      setTracks(list)
-
-      // Signed URLs — track cover first, album cover as fallback
-      const urls: Record<string, string> = {}
-      for (const t of list) {
-        const path = t.cover_path ?? (t.albums as any)?.cover_path ?? null
-        if (path) {
-          const { data: u } = await supabase.storage.from('covers').createSignedUrl(path, 3600)
-          if (u?.signedUrl) urls[t.id] = u.signedUrl
-        }
-      }
-      setCoverUrls(urls)
-      setLoading(false)
-    })()
-  }, [])
-
-  if (loading) return (
+  if (!ready) return (
     <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
       <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
       <style>{`@keyframes spin { to { transform:rotate(360deg) } }`}</style>

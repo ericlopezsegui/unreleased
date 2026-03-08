@@ -27,8 +27,10 @@ export function AppHeader() {
   return (
     <div style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 50,
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 20px', height: 56,
+      display: 'grid',
+      gridTemplateColumns: '1fr auto 1fr',
+      alignItems: 'center',
+      padding: '0 16px', height: 56,
       background: 'rgba(250,250,250,0.72)',
       backdropFilter: 'blur(28px) saturate(180%)',
       WebkitBackdropFilter: 'blur(28px) saturate(180%)',
@@ -61,7 +63,7 @@ export function AppHeader() {
       `}</style>
 
       {/* ── Left ── */}
-      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
         {isHome ? (
           miniInfo ? (
             <div className="hdr-mini" key="mini">
@@ -88,13 +90,14 @@ export function AppHeader() {
 
       {/* ── Centre — only for sub-pages ── */}
       {!isTabPage && !isHome && title && (
-        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', overflow: 'hidden', maxWidth: '50%' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', overflow: 'hidden', padding: '0 4px' }}>
           <span className="hdr-sub-title" key={title}>{title}</span>
         </div>
       )}
+      {(isTabPage || isHome || !title) && <div />}
 
       {/* ── Right ── */}
-      <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
         {rightActions}
       </div>
     </div>

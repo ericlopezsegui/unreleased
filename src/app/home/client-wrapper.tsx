@@ -1,45 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { useState } from 'react'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 import Onboarding from '@/components/onboarding/onboarding'
 import MainLayout from '@/components/layout/main-layout'
 
 export default function HomeClientWrapper() {
-  const [showOnboarding, setShowOnboarding] = useState<boolean | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const supabase = createClient()
-  const router = useRouter()
+  const ready = usePrefetchStore(s => s.ready)
+  const profile = usePrefetchStore(s => s.profile)
+  const [dismissed, setDismissed] = useState(false)
 
-  useEffect(() => {
-    checkOnboardingStatus()
-  }, [])
-
-  const checkOnboardingStatus = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      
-      if (!user) {
-        router.push('/login')
-        return
-      }
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('onboarding_completed')
-        .eq('user_id', user.id)
-        .single()
-
-      setShowOnboarding(!profile?.onboarding_completed)
-    } catch (error) {
-      console.error('Error checking onboarding:', error)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  if (isLoading) {
+  if (!ready) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
@@ -47,8 +18,8 @@ export default function HomeClientWrapper() {
     )
   }
 
-  if (showOnboarding) {
-    return <Onboarding onComplete={() => setShowOnboarding(false)} />
+  if (!dismissed && !profile?.onboarding_completed) {
+    return <Onboarding onComplete={() => setDismissed(true)} />
   }
 
   return <MainLayout />

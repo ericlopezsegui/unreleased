@@ -1,17 +1,15 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { QRCodeSVG } from 'qrcode.react'
 import { usePlayerStore, type QueueItem } from '@/stores/player-store'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
-interface Profile { display_name: string | null; avatar_path: string | null }
-interface Artist { id: string; name: string; handle: string | null; avatar_path: string | null; bio: string | null }
 interface RecentItem { id: string; title: string; type: 'album' | 'track'; updated_at: string; cover_path: string | null; album_id: string | null; album_title: string | null }
-interface Member { user_id: string; role: string; display_name: string | null; avatar_url: string | null }
 interface Invite { id: string; token: string; role: string; expires_at: string; used_at: string | null }
 
 const ico: Record<string, [string, ...string[]]> = {
@@ -61,10 +59,21 @@ function QRModal({ url, onClose }: { url: string; onClose: () => void }) {
   )
 }
 
-function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; currentUserId: string; onClose: () => void }) {
+function TeamModal({ artistId, artistName, currentUserId, onClose }: { artistId: string; artistName: string; currentUserId: string; onClose: () => void }) {
   const supabase = createClient()
-  const [members, setMembers] = useState<Member[]>([])
+  // Use prefetched members data for instant display
+  const storeMembers = usePrefetchStore(s => s.members)
+  const memberAvatarUrls = usePrefetchStore(s => s.memberAvatarUrls)
+  const [members, setMembers] = useState(() =>
+    storeMembers.map(m => ({
+      user_id: m.user_id,
+      role: m.role,
+      display_name: m.profile?.display_name ?? null,
+      avatar_url: memberAvatarUrls[m.user_id] ?? null,
+    }))
+  )
   const [invites, setInvites] = useState<Invite[]>([])
+  const [invitesLoaded, setInvitesLoaded] = useState(false)
   const [creating, setCreating] = useState<'editor' | 'viewer' | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [inviteError, setInviteError] = useState<string | null>(null)
@@ -79,7 +88,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
   useEffect(() => {
     requestAnimationFrame(() => setVisible(true))
-    load()
+    loadInvites()
   }, [])
 
   const handleClose = () => {
@@ -87,34 +96,17 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
     setTimeout(() => onClose(), 320)
   }
 
-  const load = async () => {
-    const [mRes, iRes] = await Promise.all([
-      supabase.rpc('get_artist_member_profiles', { aid: artist.id }),
-      supabase.rpc('get_artist_invites', { p_artist_id: artist.id }),
-    ])
-
-    const memberData = (mRes.data ?? []) as { user_id: string; role: string; created_at: string; display_name: string | null; avatar_path: string | null }[]
-
-    const membersWithData: Member[] = await Promise.all(
-      memberData.map(async m => {
-        let avatar_url: string | null = null
-        if (m.avatar_path) {
-          const { data: su } = await supabase.storage.from('avatars').createSignedUrl(m.avatar_path, 3600)
-          avatar_url = su?.signedUrl ?? null
-        }
-        return { user_id: m.user_id, role: m.role, display_name: m.display_name ?? null, avatar_url }
-      })
-    )
-
-    setMembers(membersWithData)
-    setInvites((iRes.data ?? []) as Invite[])
+  const loadInvites = async () => {
+    const { data } = await supabase.rpc('get_artist_invites', { p_artist_id: artistId })
+    setInvites((data ?? []) as Invite[])
+    setInvitesLoaded(true)
   }
 
   const createInvite = async (role: 'editor' | 'viewer') => {
     setCreating(role)
     setInviteError(null)
 
-    const { data, error } = await supabase.rpc('create_artist_invite', { p_artist_id: artist.id, p_role: role })
+    const { data, error } = await supabase.rpc('create_artist_invite', { p_artist_id: artistId, p_role: role })
 
     if (error) {
       setInviteError(`Error al crear el código: ${error.message}`)
@@ -145,7 +137,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
     setConfirmRemove(null)
     setDeletingMembers(prev => new Set(prev).add(userId))
     setOpError(null)
-    const { error } = await supabase.rpc('remove_artist_member', { p_artist_id: artist.id, p_user_id: userId })
+    const { error } = await supabase.rpc('remove_artist_member', { p_artist_id: artistId, p_user_id: userId })
     setDeletingMembers(prev => { const s = new Set(prev); s.delete(userId); return s })
     if (error) {
       setOpError(`No se pudo eliminar el miembro: ${error.message}`)
@@ -158,7 +150,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 
   const changeMemberRole = async (userId: string, role: 'editor' | 'viewer') => {
     const { error } = await supabase.rpc('set_artist_member_role', {
-      p_artist_id: artist.id, p_user_id: userId, p_role: role,
+      p_artist_id: artistId, p_user_id: userId, p_role: role,
     })
     if (error) { setOpError(`No se pudo cambiar el rol: ${error.message}`); return }
     setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, role } : m))
@@ -207,7 +199,7 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
           <div>
             <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.18em', textTransform: 'uppercase', color: '#ccc', margin: '0 0 4px' }}>Equipo</p>
-            <h2 style={{ fontSize: 18, fontWeight: 200, color: '#0f0f0f', margin: 0, letterSpacing: '-0.02em' }}>{artist.name}</h2>
+            <h2 style={{ fontSize: 18, fontWeight: 200, color: '#0f0f0f', margin: 0, letterSpacing: '-0.02em' }}>{artistName}</h2>
           </div>
           <button onClick={handleClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', display: 'flex', padding: 4 }}>
             <Ic n="close" s={16} />
@@ -358,19 +350,22 @@ function TeamModal({ artist, currentUserId, onClose }: { artist: Artist; current
 }
 
 export default function HomePage() {
-  const [loading, setLoading] = useState(true)
-  const [userId, setUserId] = useState<string | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [artist, setArtist] = useState<Artist | null>(null)
-  const [recent, setRecent] = useState<RecentItem[]>([])
+  const ready = usePrefetchStore(s => s.ready)
+  const userId = usePrefetchStore(s => s.userId)
+  const profile = usePrefetchStore(s => s.profile)
+  const artist = usePrefetchStore(s => s.artist)
+  const storeAlbums = usePrefetchStore(s => s.albums)
+  const storeTracks = usePrefetchStore(s => s.tracks)
+  const storeVersions = usePrefetchStore(s => s.versions)
+  const storeCoverUrls = usePrefetchStore(s => s.coverUrls)
+  const storeAudioUrls = usePrefetchStore(s => s.audioUrls)
+  const avatarUrl = usePrefetchStore(s => s.artistAvatarUrl)
+  const profileAvatarUrl = usePrefetchStore(s => s.avatarUrl)
+  const storeMembers = usePrefetchStore(s => s.members)
+  const memberAvatarUrls = usePrefetchStore(s => s.memberAvatarUrls)
+
   const [showQR, setShowQR] = useState(false)
   const [showTeam, setShowTeam] = useState(false)
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null)
-  const [teamMembers, setTeamMembers] = useState<Member[]>([])
-  const [albumCount, setAlbumCount] = useState(0)
-  const [trackCount, setTrackCount] = useState(0)
-  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [recentView, setRecentView] = useState<'grid' | 'list'>('grid')
   const [playingId, setPlayingId] = useState<string | null>(null)
   const router = useRouter()
@@ -379,130 +374,45 @@ export default function HomePage() {
   const { setRightActions, setMiniInfo } = useHeaderContext()
   const loadQueue = usePlayerStore(s => s.loadQueue)
 
-  const playTrack = async (item: RecentItem) => {
+  const recent = useMemo<RecentItem[]>(() => {
+    const items: RecentItem[] = [
+      ...storeAlbums.map(a => ({ id: a.id, title: a.title, type: 'album' as const, updated_at: a.updated_at, cover_path: a.cover_path, album_id: null, album_title: null })),
+      ...storeTracks.map(t => ({ id: t.id, title: t.title, type: 'track' as const, updated_at: t.updated_at, cover_path: t.cover_path ?? t.albums?.cover_path ?? null, album_id: t.album_id, album_title: t.albums?.title ?? null })),
+    ]
+    return items.sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at)).slice(0, 6)
+  }, [storeAlbums, storeTracks])
+
+  const teamMembers = useMemo(() => storeMembers.map(m => ({
+    user_id: m.user_id, role: m.role,
+    display_name: m.profile?.display_name ?? null,
+    avatar_url: memberAvatarUrls[m.user_id] ?? null,
+  })), [storeMembers, memberAvatarUrls])
+
+  const playTrack = (item: RecentItem) => {
     if (playingId) return
-    setPlayingId(item.id)
-    try {
-      const { data: ver } = await supabase
-        .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', item.id).eq('is_active', true).single()
-      if (!ver?.audio_path) return
-      const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
-      if (!urlData?.signedUrl) return
-      loadQueue([{ trackId: item.id, trackTitle: item.title, coverUrl: coverUrls[item.id] ?? null, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id }], 0)
-    } finally {
-      setPlayingId(null)
-    }
+    const activeVer = storeVersions.find(v => v.track_id === item.id && v.is_active)
+    if (!activeVer) return
+    let audioUrl = storeAudioUrls[activeVer.id]
+    if (!audioUrl) return
+    loadQueue([{ trackId: item.id, trackTitle: item.title, coverUrl: storeCoverUrls[item.id] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id }], 0)
   }
 
-  const playAlbum = async (item: RecentItem) => {
+  const playAlbum = (item: RecentItem) => {
     if (playingId) return
-    setPlayingId(item.id)
-    try {
-      const { data: tracks } = await supabase
-        .from('tracks').select('id,title,cover_path').eq('album_id', item.id)
-        .order('position', { ascending: true, nullsFirst: false })
-      if (!tracks?.length) return
-      const items: QueueItem[] = []
-      await Promise.all(tracks.map(async t => {
-        const { data: ver } = await supabase
-          .from('track_versions').select('id,label,bpm,key,audio_path').eq('track_id', t.id).eq('is_active', true).single()
-        if (!ver?.audio_path) return
-        const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(ver.audio_path, 3600)
-        if (!urlData?.signedUrl) return
-        const coverPath = t.cover_path || item.cover_path
-        let tCoverUrl: string | null = coverUrls[item.id] ?? null
-        if (t.cover_path) {
-          const { data: cu } = await supabase.storage.from('covers').createSignedUrl(t.cover_path, 3600)
-          tCoverUrl = cu?.signedUrl ?? null
-        }
-        items.push({ trackId: t.id, trackTitle: t.title, coverUrl: tCoverUrl, versions: [{ id: ver.id, label: ver.label, audioUrl: urlData.signedUrl, bpm: ver.bpm, key: ver.key }], initialVersionId: ver.id })
-      }))
-      // Sort by original track order
-      const orderedItems = tracks.map(t => items.find(qi => qi.trackId === t.id)).filter(Boolean) as QueueItem[]
-      if (orderedItems.length) loadQueue(orderedItems, 0)
-    } finally {
-      setPlayingId(null)
+    const albumTracks = storeTracks
+      .filter(t => t.album_id === item.id)
+      .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+    if (!albumTracks.length) return
+    const queueItems: QueueItem[] = []
+    for (const t of albumTracks) {
+      const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
+      if (!activeVer) continue
+      const audioUrl = storeAudioUrls[activeVer.id]
+      if (!audioUrl) continue
+      queueItems.push({ trackId: t.id, trackTitle: t.title, coverUrl: storeCoverUrls[t.id] ?? storeCoverUrls[item.id] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id })
     }
+    if (queueItems.length) loadQueue(queueItems, 0)
   }
-
-  useEffect(() => {
-    ;(async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-      setUserId(user.id)
-
-      const pRes = await supabase.from('profiles').select('display_name,avatar_path').eq('user_id', user.id).single()
-      setProfile(pRes.data)
-
-      // Buscar artista donde el usuario sea miembro (owner o invitado)
-      const { data: membership } = await supabase
-        .from('artist_members')
-        .select('artist_id')
-        .eq('user_id', user.id)
-        .order('created_at')
-        .limit(1)
-        .single()
-
-      let a: Artist | null = null
-      if (membership) {
-        const { data: artistData } = await supabase
-          .from('artists')
-          .select('id,name,handle,avatar_path,bio')
-          .eq('id', membership.artist_id)
-          .single()
-        a = artistData as Artist | null
-      }
-
-      setArtist(a)
-
-      if (a?.avatar_path) {
-        const { data } = await supabase.storage.from('avatars').createSignedUrl(a.avatar_path, 86400)
-        if (data?.signedUrl) setAvatarUrl(data.signedUrl)
-      }
-      if (pRes.data?.avatar_path) {
-        const { data } = await supabase.storage.from('avatars').createSignedUrl(pRes.data.avatar_path, 86400)
-        if (data?.signedUrl) setProfileAvatarUrl(data.signedUrl)
-      }
-      if (a) {
-        const [albRes, trRes, mRes] = await Promise.all([
-          supabase.from('albums').select('id,title,cover_path,updated_at').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
-          supabase.from('tracks').select('id,title,updated_at,cover_path,album_id,albums(title,cover_path)').eq('artist_id', a.id).order('updated_at', { ascending: false }).limit(8),
-          supabase.rpc('get_artist_member_profiles', { aid: a.id }),
-        ])
-        // Load team member avatars
-        const memberData = (mRes.data ?? []) as { user_id: string; role: string; display_name: string | null; avatar_path: string | null }[]
-        const membersWithAvatars: Member[] = await Promise.all(
-          memberData.map(async m => {
-            let avatar_url: string | null = null
-            if (m.avatar_path) {
-              const { data: su } = await supabase.storage.from('avatars').createSignedUrl(m.avatar_path, 3600)
-              avatar_url = su?.signedUrl ?? null
-            }
-            return { user_id: m.user_id, role: m.role, display_name: m.display_name ?? null, avatar_url }
-          })
-        )
-        setTeamMembers(membersWithAvatars)
-        setAlbumCount(albRes.data?.length ?? 0)
-        setTrackCount(trRes.data?.length ?? 0)
-        const items: RecentItem[] = [
-          ...(albRes.data ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'album' as const, updated_at: x.updated_at, cover_path: x.cover_path, album_id: null, album_title: null })),
-          ...(trRes.data ?? []).map((x: any) => ({ id: x.id, title: x.title, type: 'track' as const, updated_at: x.updated_at, cover_path: x.cover_path ?? (x.albums as any)?.cover_path ?? null, album_id: x.album_id ?? null, album_title: (x.albums as any)?.title ?? null })),
-        ].sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at)).slice(0, 6)
-        setRecent(items)
-        const coverItems = items.filter(i => i.cover_path)
-        if (coverItems.length) {
-          const urlEntries = await Promise.all(
-            coverItems.map(async (item) => {
-              const { data } = await supabase.storage.from('covers').createSignedUrl(item.cover_path!, 86400)
-              return [item.id, data?.signedUrl ?? null] as const
-            })
-          )
-          setCoverUrls(Object.fromEntries(urlEntries.filter(([, url]) => url !== null) as [string, string][]))
-        }
-      }
-      setLoading(false)
-    })()
-  }, [])
 
   const signOut = async () => { await supabase.auth.signOut(); router.push('/login') }
 
@@ -532,7 +442,7 @@ export default function HomePage() {
     return () => obs.disconnect()
   }, [avatarUrl, artist])
 
-  if (loading) return (
+  if (!ready) return (
     <div className="loader-wrap">
       <div className="loader" />
       <style>{styles}</style>
@@ -546,7 +456,7 @@ export default function HomePage() {
   return (
     <div className="page">
       <style>{styles}</style>
-      {showTeam && artist && <TeamModal artist={artist} currentUserId={userId ?? ''} onClose={() => setShowTeam(false)} />}
+      {showTeam && artist && <TeamModal artistId={artist.id} artistName={artist.name} currentUserId={userId ?? ''} onClose={() => setShowTeam(false)} />}
       {/* ── Hero ── */}
       <section className="hero" ref={heroRef}>
         {avatarUrl && (
@@ -562,7 +472,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Team strip ── */}
-      {artist && teamMembers.length > 0 && (
+      {artist && (
         <section className="team-strip" onClick={() => setShowTeam(true)}>
           <div className="team-avatars">
             {teamMembers.slice(0, 3).map((m, i) => {
@@ -623,8 +533,8 @@ export default function HomePage() {
                     onClick={() => router.push(item.type === 'album' ? `/albums/${item.id}` : `/tracks/${item.id}`)}
                   >
                     <div className="rc-cover">
-                      {coverUrls[item.id]
-                        ? <img src={coverUrls[item.id]} alt="" />
+                      {storeCoverUrls[item.id]
+                        ? <img src={storeCoverUrls[item.id]} alt="" />
                         : (
                           <div className={`rc-cover-placeholder ${item.type}`}>
                             <Ic n={item.type === 'album' ? 'disc' : 'music'} s={18} c="currentColor" />
@@ -669,8 +579,8 @@ export default function HomePage() {
                     onClick={() => router.push(item.type === 'album' ? `/albums/${item.id}` : `/tracks/${item.id}`)}
                   >
                     <div className="rl-cover">
-                      {coverUrls[item.id]
-                        ? <img src={coverUrls[item.id]} alt="" />
+                      {storeCoverUrls[item.id]
+                        ? <img src={storeCoverUrls[item.id]} alt="" />
                         : (
                           <div className={`rl-cover-ph ${item.type}`}>
                             <Ic n={item.type === 'album' ? 'disc' : 'music'} s={14} c="currentColor" />
