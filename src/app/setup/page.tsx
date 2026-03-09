@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WaveBackground } from '@/components/ui/wave-background'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 type Step = 'profile' | 'choice' | 'artist' | 'join' | 'done'
 
@@ -208,6 +209,7 @@ export default function SetupPage() {
       goTo('done')
       
       // CAMBIO: Esperar 2 segundos para que el archivo se propague en storage
+      usePrefetchStore.getState().invalidate()
       setTimeout(() => router.push('/home'), 2500) // ← Aumentar de 1800 a 2500ms
     } catch (err: unknown) {
       console.error('❌ Error general:', err)
@@ -238,6 +240,7 @@ export default function SetupPage() {
       }
       if (status === 'ok') {
         goTo('done')
+        usePrefetchStore.getState().invalidate()
         setTimeout(() => router.push('/home'), 2000)
       } else {
         setJoinError(msgs[status as string] ?? `Error: ${status}`)

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { analyzeAudio } from '@/lib/analyze-audio'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: number; c?: string }) {
   const paths = Array.isArray(d) ? d : [d]
@@ -127,17 +128,40 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
     }
 
     // Crear versión inicial
-    const { error: vErr } = await supabase.from('track_versions').insert({
+    const { data: version, error: vErr } = await supabase.from('track_versions').insert({
       track_id: track.id,
       label: versionLabel.trim() || 'v1',
       audio_path: audioPath,
       bpm: bpm ? parseFloat(bpm) : null,
       key: key.trim() || null,
       is_active: true,
-    })
+    }).select('id,track_id,label,notes,audio_path,bpm,key,is_active,created_at').single()
 
     if (vErr) { setError(vErr.message); setLoading(false); return }
     setProgress(100)
+
+    // Update prefetch store so lists refresh instantly
+    const store = usePrefetchStore.getState()
+    const newTrack = {
+      id: track.id, title: title.trim(), description: description.trim() || null,
+      cover_path: coverPath, album_id: albumId || null, position: null,
+      updated_at: new Date().toISOString(), artist_id: aId!,
+      albums: null as { title: string; cover_path: string | null } | null,
+    }
+    store.addTrack(newTrack)
+    if (version) {
+      store.addVersion(version)
+      // Sign audio URL
+      if (version.audio_path) {
+        const { data: audioSig } = await supabase.storage.from('audio').createSignedUrl(version.audio_path, 3600)
+        if (audioSig?.signedUrl) store.setAudioUrl(version.id, audioSig.signedUrl)
+      }
+    }
+    // Sign cover URL
+    if (coverPath) {
+      const { data: coverSig } = await supabase.storage.from('covers').createSignedUrl(coverPath, 3600)
+      if (coverSig?.signedUrl) store.setCoverUrl(track.id, coverSig.signedUrl)
+    }
 
     setTimeout(() => {
       if (albumId) router.push(`/albums/${albumId}`)

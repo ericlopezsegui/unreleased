@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { WaveBackground } from '@/components/ui/wave-background'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 interface InviteInfo {
   artist_name: string
@@ -82,7 +83,7 @@ export default function InvitePage() {
       if (user) {
         setStep('accepting')
         const { data: result } = await supabase.rpc('accept_artist_invite', { p_token: token, p_display_name: '' })
-        if (result === 'ok') { setStep('success'); setTimeout(() => router.push('/home'), 1500) }
+        if (result === 'ok') { setStep('success'); usePrefetchStore.getState().invalidate(); setTimeout(() => router.push('/home'), 1500) }
         else { setErrorMsg('No se pudo unir al equipo.'); setStep('error') }
         return
       }
@@ -173,6 +174,7 @@ export default function InvitePage() {
 
     if (result === 'ok') {
       setStep('success')
+      usePrefetchStore.getState().invalidate()
       setTimeout(() => router.push('/home'), 1500)
     } else {
       setErrorMsg(`No se pudo unir al equipo. (${result ?? rpcErr?.message})`)

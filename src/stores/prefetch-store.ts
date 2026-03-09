@@ -184,8 +184,29 @@ export const usePrefetchStore = create<PrefetchState>((set, get) => ({
       memberAvatarUrls,
     })
 
-    // Preload audio for recent active versions so playback starts instantly
+    // Preload cover images and audio for recent tracks so content appears instantly
     if (typeof window !== 'undefined') {
+      // Preload all cover images (albums + tracks)
+      Object.values(coverUrls).forEach(url => {
+        const img = new Image()
+        img.src = url
+      })
+      // Preload artist avatar
+      if (artistAvatarUrl) {
+        const img = new Image()
+        img.src = artistAvatarUrl
+      }
+      // Preload member avatars
+      Object.values(memberAvatarUrls).forEach(url => {
+        const img = new Image()
+        img.src = url
+      })
+      // Preload user avatar
+      if (avatarUrl) {
+        const img = new Image()
+        img.src = avatarUrl
+      }
+      // Preload audio for recent active versions so playback starts instantly
       const recentTracks = [...trackList].sort((a, b) => +new Date(b.updated_at) - +new Date(a.updated_at)).slice(0, 8)
       for (const t of recentTracks) {
         const v = allVersions.find(ver => ver.track_id === t.id && ver.is_active)

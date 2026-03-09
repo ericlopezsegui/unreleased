@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
+import { usePrefetchStore } from '@/stores/prefetch-store'
 
 export default function NewAlbumPage() {
   const [title, setTitle] = useState('')
@@ -57,6 +58,18 @@ export default function NewAlbumPage() {
       .select('id').single()
 
     if (insertErr) { setError(insertErr.message); setLoading(false); return }
+
+    // Update prefetch store so lists refresh instantly
+    const store = usePrefetchStore.getState()
+    store.addAlbum({
+      id: album.id, title: title.trim(), description: description.trim() || null,
+      cover_path: coverPath, is_archived: false, updated_at: new Date().toISOString(), track_count: 0,
+    })
+    if (coverPath) {
+      const { data: coverSig } = await supabase.storage.from('covers').createSignedUrl(coverPath, 3600)
+      if (coverSig?.signedUrl) store.setCoverUrl(album.id, coverSig.signedUrl)
+    }
+
     router.push(`/albums/${album.id}`)
   }
 

@@ -69,12 +69,12 @@ function Shell({ children }: { children: React.ReactNode }) {
   const ready = usePrefetchStore(s => s.ready)
   const prefetch = usePrefetchStore(s => s.prefetch)
 
-  // Trigger prefetch once on mount (only for non-auth pages)
-  const prefetched = useRef(false)
+  // Trigger prefetch on mount and after invalidation (for non-auth pages)
+  const prefetching = useRef(false)
   useEffect(() => {
-    if (!isAuthPage && !ready && !prefetched.current) {
-      prefetched.current = true
-      prefetch()
+    if (!isAuthPage && !ready && !prefetching.current) {
+      prefetching.current = true
+      prefetch().finally(() => { prefetching.current = false })
     }
   }, [isAuthPage, ready, prefetch])
 
