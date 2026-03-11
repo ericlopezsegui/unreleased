@@ -7,6 +7,7 @@ import { useHeaderContext } from '@/lib/header-context'
 import { analyzeAudio } from '@/lib/analyze-audio'
 import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
+import { getAudioEngine, resumeAudioContext } from '@/lib/audio/engine-instance'
 
 type Version = { id: string; track_id?: string; label: string; notes: string | null; audio_path: string | null; bpm: number | null; key: string | null; is_active: boolean; created_at: string }
 
@@ -96,9 +97,12 @@ export default function TrackPage() {
 
   const openPlayer = usePlayerStore(s => s.openPlayer)
   const playerCurrentId = usePlayerStore(s => s.currentVersionId)
+  const setPlaying = usePlayerStore(s => s.setPlaying)
 
-  const playVersion = (startVersionId?: string) => {
+   const playVersion = async (startVersionId?: string) => {
     if (!track || versions.length === 0) return
+
+    await resumeAudioContext()
 
     const pVersions = versions
       .filter(v => audioUrls[v.id])
@@ -128,6 +132,8 @@ export default function TrackPage() {
         { id: `${track.id}-inst`, label: 'Instrumentos' },
       ],
     })
+
+    setPlaying(true)
   }
 
   const openAddVersion = () => {
@@ -347,7 +353,7 @@ export default function TrackPage() {
 
         {/* Play button */}
         {versions.some(v => audioUrls[v.id]) && (
-          <button className="play-chip" onClick={() => playVersion()} style={{ marginBottom: 32 }}>
+          <button className="play-chip" onClick={() => void playVersion()} style={{ marginBottom: 32 }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>
             Reproducir
           </button>
@@ -363,7 +369,7 @@ export default function TrackPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: v.notes ? 8 : 0 }}>
                   {audioUrls[v.id] && (
                     <button
-                      onClick={() => playVersion(v.id)}
+                      onClick={() => void playVersion(v.id)}
                       style={{ width: 32, height: 32, borderRadius: '50%', background: playerCurrentId === v.id ? '#0f0f0f' : 'rgba(0,0,0,0.06)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background .15s' }}
                     >
                       <svg width="10" height="10" viewBox="0 0 24 24" fill={playerCurrentId === v.id ? '#fff' : '#666'} stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>
@@ -390,7 +396,7 @@ export default function TrackPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                     {v.audio_path && (
                       <button
-                        onClick={() => downloadVersion(v)}
+                        onClick={() => void downloadVersion(v)}
                         disabled={downloading.has(v.id)}
                         title={downloading.has(v.id) ? 'Descargando…' : `Descargar ${v.label}`}
                         style={{ width: 32, height: 32, borderRadius: '50%', background: downloading.has(v.id) ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)', border: 'none', cursor: downloading.has(v.id) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
@@ -403,7 +409,7 @@ export default function TrackPage() {
                       </button>
                     )}
                     {!v.is_active && (
-                      <button onClick={() => setActive(v.id)} className="activate-btn">Activar</button>
+                      <button onClick={() => void setActive(v.id)} className="activate-btn">Activar</button>
                     )}
                   </div>
                 </div>

@@ -167,7 +167,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         currentVersionId: versionId,
         currentTime: 0,
         duration: 0,
-        isPlaying: false,
+        // Keep isPlaying so the new version auto-starts if one was already playing
       }
     }),
 
@@ -193,7 +193,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       stems: item.stems ?? [],
       currentTime: 0,
       duration: 0,
-      isPlaying: false,
+      isPlaying: true,  // keep playing through the queue
       activeTab: 'versions',
     })
   },
@@ -216,7 +216,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       stems: item.stems ?? [],
       currentTime: 0,
       duration: 0,
-      isPlaying: false,
+      isPlaying: true,  // keep playing when navigating back
       activeTab: 'versions',
     })
   },

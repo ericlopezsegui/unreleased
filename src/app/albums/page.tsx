@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
-import { usePlayerStore, type QueueItem } from '@/stores/player-store'
+import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
+import { resumeAudioContext } from '@/lib/audio/engine-instance'
 
 function Ic({ d, s = 16 }: { d: string | string[]; s?: number }) {
   const paths = Array.isArray(d) ? d : [d]
@@ -19,7 +20,6 @@ function Ic({ d, s = 16 }: { d: string | string[]; s?: number }) {
 export default function AlbumsPage() {
   const albums = usePrefetchStore(s => s.albums)
   const coverUrls = usePrefetchStore(s => s.coverUrls)
-  const artistId = usePrefetchStore(s => s.artistId)
   const ready = usePrefetchStore(s => s.ready)
   const versions = usePrefetchStore(s => s.versions)
   const tracks = usePrefetchStore(s => s.tracks)
@@ -27,34 +27,132 @@ export default function AlbumsPage() {
 
   const [albumsView, setAlbumsView] = useState<'grid' | 'list'>('grid')
   const [playingId, setPlayingId] = useState<string | null>(null)
+
   const router = useRouter()
   const supabase = createClient()
   const { setTitle, setRightActions } = useHeaderContext()
-  const loadQueue = usePlayerStore(s => s.loadQueue)
+
+  const openPlayer = usePlayerStore(s => s.openPlayer)
+  const setPlaying = usePlayerStore(s => s.setPlaying)
 
   const playAlbum = async (albumId: string) => {
     if (playingId) return
+
     setPlayingId(albumId)
+
     try {
-      // Use prefetched data
-      const albumTracks = tracks.filter(t => t.album_id === albumId).sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+      await resumeAudioContext()
+
+      const albumTracks = tracks
+        .filter(t => t.album_id === albumId)
+        .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+
       if (!albumTracks.length) return
+
       const albumCoverUrl = coverUrls[albumId] ?? null
 
-      const items: QueueItem[] = []
+      const playerTracks: Array<{
+        trackId: string
+        trackTitle: string
+        coverUrl: string | null
+        versions: Array<{
+          id: string
+          label: string
+          audioUrl: string
+          bpm?: number | null
+          key?: string | null
+        }>
+        initialVersionId: string
+      }> = []
+
       for (const t of albumTracks) {
-        const activeVer = versions.find(v => v.track_id === t.id && v.is_active)
-        if (!activeVer?.audio_path) continue
-        let audioUrl = audioUrls[activeVer.id]
-        if (!audioUrl) {
-          const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(activeVer.audio_path, 3600)
-          if (!urlData?.signedUrl) continue
-          audioUrl = urlData.signedUrl
+        const trackVersions = versions.filter(v => v.track_id === t.id)
+        if (!trackVersions.length) continue
+
+        const playableVersions: Array<{
+          id: string
+          label: string
+          audioUrl: string
+          bpm?: number | null
+          key?: string | null
+        }> = []
+
+        for (const v of trackVersions) {
+          let signedUrl = audioUrls[v.id]
+
+          if (!signedUrl && v.audio_path) {
+            const { data: urlData } = await supabase
+              .storage
+              .from('audio')
+              .createSignedUrl(v.audio_path, 3600)
+
+            if (urlData?.signedUrl) {
+              signedUrl = urlData.signedUrl
+            }
+          }
+
+          if (!signedUrl) continue
+
+          playableVersions.push({
+            id: v.id,
+            label: v.label,
+            audioUrl: signedUrl,
+            bpm: v.bpm,
+            key: v.key,
+          })
         }
-        const tCoverUrl = coverUrls[t.id] ?? albumCoverUrl
-        items.push({ trackId: t.id, trackTitle: t.title, coverUrl: tCoverUrl, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id })
+
+        if (!playableVersions.length) continue
+
+        const activeVersion =
+          trackVersions.find(v => v.is_active && playableVersions.some(pv => pv.id === v.id)) ??
+          trackVersions.find(v => playableVersions.some(pv => pv.id === v.id))
+
+        if (!activeVersion) continue
+
+        const trackCoverUrl = coverUrls[t.id] ?? albumCoverUrl
+
+        playerTracks.push({
+          trackId: t.id,
+          trackTitle: t.title,
+          coverUrl: trackCoverUrl,
+          versions: playableVersions,
+          initialVersionId: activeVersion.id,
+        })
       }
-      if (items.length) loadQueue(items, 0)
+
+      if (!playerTracks.length) return
+
+      if (!playerTracks.length) return
+
+      openPlayer({
+        trackId: playerTracks[0].trackId,
+        trackTitle: playerTracks[0].trackTitle,
+        coverUrl: playerTracks[0].coverUrl,
+        versions: playerTracks[0].versions,
+        initialVersionId: playerTracks[0].initialVersionId,
+        stems: [
+          { id: `${playerTracks[0].trackId}-vocals`, label: 'Voces' },
+          { id: `${playerTracks[0].trackId}-drums`, label: 'Batería' },
+          { id: `${playerTracks[0].trackId}-bass`, label: 'Bajo' },
+          { id: `${playerTracks[0].trackId}-inst`, label: 'Instrumentos' },
+        ],
+        queue: playerTracks.map((track) => ({
+          trackId: track.trackId,
+          trackTitle: track.trackTitle,
+          coverUrl: track.coverUrl,
+          versions: track.versions,
+          stems: [
+            { id: `${track.trackId}-vocals`, label: 'Voces' },
+            { id: `${track.trackId}-drums`, label: 'Batería' },
+            { id: `${track.trackId}-bass`, label: 'Bajo' },
+            { id: `${track.trackId}-inst`, label: 'Instrumentos' },
+          ],
+        })),
+        queueIndex: 0,
+      })
+
+      setPlaying(true)
     } finally {
       setPlayingId(null)
     }
@@ -67,16 +165,20 @@ export default function AlbumsPage() {
         <Ic d="M12 5v14M5 12h14" s={12} /> Nuevo
       </button>
     )
-    return () => { setTitle(''); setRightActions(null) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    return () => {
+      setTitle('')
+      setRightActions(null)
+    }
+  }, [router, setRightActions, setTitle])
 
-  if (!ready) return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
-      <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  )
+  if (!ready) {
+    return (
+      <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
+        <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
@@ -134,16 +236,28 @@ export default function AlbumsPage() {
                 </button>
               </div>
             </div>
+
             {albumsView === 'grid' ? (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
                 {albums.map((album, i) => (
-                  <div key={album.id} onClick={() => router.push(`/albums/${album.id}`)} role="button" tabIndex={0} className="alb-card" style={{ animationDelay: `${i * 0.06}s` }}>
+                  <div
+                    key={album.id}
+                    onClick={() => router.push(`/albums/${album.id}`)}
+                    role="button"
+                    tabIndex={0}
+                    className="alb-card"
+                    style={{ animationDelay: `${i * 0.06}s` }}
+                  >
                     <div className="alb-cover">
                       {coverUrls[album.id]
                         ? <img src={coverUrls[album.id]} alt="" />
                         : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #f0f0f0, #e8e8e8)', color: '#ccc' }}><Ic d={['M12 2a10 10 0 100 20A10 10 0 0012 2z', 'M12 8a4 4 0 100 8 4 4 0 000-8z']} s={24} /></div>}
+
                       <button
-                        onClick={e => { e.stopPropagation(); playAlbum(album.id) }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void playAlbum(album.id)
+                        }}
                         style={{ position: 'absolute', bottom: 8, right: 8, width: 28, height: 28, borderRadius: '50%', background: 'rgba(15,15,15,0.72)', backdropFilter: 'blur(4px)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                       >
                         {playingId === album.id
@@ -151,6 +265,7 @@ export default function AlbumsPage() {
                           : <svg width="10" height="10" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
                       </button>
                     </div>
+
                     <div className="alb-body">
                       <span className="alb-title">{album.title}</span>
                       <span className="alb-meta">{album.track_count ?? 0} tracks</span>
@@ -161,18 +276,30 @@ export default function AlbumsPage() {
             ) : (
               <div className="alb-list">
                 {albums.map((album, i) => (
-                  <div key={album.id} onClick={() => router.push(`/albums/${album.id}`)} role="button" tabIndex={0} className="alb-list-item" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <div
+                    key={album.id}
+                    onClick={() => router.push(`/albums/${album.id}`)}
+                    role="button"
+                    tabIndex={0}
+                    className="alb-list-item"
+                    style={{ animationDelay: `${i * 0.04}s` }}
+                  >
                     <div className="alb-list-cover">
                       {coverUrls[album.id]
                         ? <img src={coverUrls[album.id]} alt="" />
                         : <div className="alb-list-ph"><Ic d={['M12 2a10 10 0 100 20A10 10 0 0012 2z', 'M12 8a4 4 0 100 8 4 4 0 000-8z']} s={16} /></div>}
                     </div>
+
                     <div className="alb-list-info">
                       <span className="alb-list-title">{album.title}</span>
                       <span className="alb-list-meta">{album.track_count ?? 0} tracks</span>
                     </div>
+
                     <button
-                      onClick={e => { e.stopPropagation(); playAlbum(album.id) }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void playAlbum(album.id)
+                      }}
                       style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.07)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                     >
                       {playingId === album.id

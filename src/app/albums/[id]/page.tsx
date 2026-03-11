@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
+import { resumeAudioContext } from '@/lib/audio/engine-instance'
 
 function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: number; c?: string }) {
   const paths = Array.isArray(d) ? d : [d]
@@ -50,6 +51,7 @@ export default function AlbumPage() {
   const coverInputRef = useRef<HTMLInputElement>(null)
   const { setTitle, setBackHref, setRightActions } = useHeaderContext()
   const openPlayer = usePlayerStore(s => s.openPlayer)
+  const setPlaying = usePlayerStore(s => s.setPlaying)
 
   const playFromTrack = async (startIndex: number) => {
     if (playingIdx !== null) return
@@ -57,6 +59,8 @@ export default function AlbumPage() {
     setPlayingIdx(startIndex)
 
     try {
+      await resumeAudioContext()
+
       const queue = []
 
       for (const t of tracks) {
@@ -118,6 +122,8 @@ export default function AlbumPage() {
         queue,
         queueIndex: qIdx,
       })
+
+      setPlaying(true)
     } finally {
       setPlayingIdx(null)
     }

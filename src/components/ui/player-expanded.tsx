@@ -21,6 +21,9 @@ function fmt(s: number) {
 }
 
 export function PlayerExpanded({
+  pitch,
+  rate,  
+  eq,
   isVisible,
   trackTitle,
   coverUrl,
@@ -42,13 +45,13 @@ export function PlayerExpanded({
   onNext,
   onSelectVersion,
   onChangeTab,
-  rate,
   setRate,
-  pitch,
   setPitch,
+  setEq,
 }: {
   rate: number
   pitch: number
+  eq: { bass: number; mid: number; treble: number }
   isVisible: boolean
   trackTitle: string | null
   coverUrl?: string | null
@@ -72,6 +75,7 @@ export function PlayerExpanded({
   onChangeTab: (tab: PlayerTab) => void
   setRate: (rate: number) => void
   setPitch: (pitch: number) => void
+  setEq: (eq: { bass: number; mid: number; treble: number }) => void
 }) {
   const remaining = Math.max(duration - currentTime, 0)
 
@@ -252,7 +256,7 @@ export function PlayerExpanded({
                   onChangePitch={setPitch}
                 />
               )}
-              {activeTab === 'eq' && <EqPanel />}
+              {activeTab === 'eq' && <EqPanel eq={eq} setEq={setEq} />}
               {activeTab === 'stems' && <StemsPanel stems={stems} />}
             </div>
           </div>

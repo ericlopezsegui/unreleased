@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { usePlayerStore } from '@/stores/player-store'
 import { PlayerExpanded } from './player-expanded'
 import { PlayerMini } from './player-mini'
@@ -38,6 +38,10 @@ export function PlayerShell() {
   const [rate, setRate] = useState(1)
   const [pitch, setPitch] = useState(0)
   const [eq, setEq] = useState({ bass: 0, mid: 0, treble: 0 })
+
+  // Track whether load() is currently in flight so the isPlaying effect
+  // doesn't race with it and call play() on an empty/wrong buffer.
+  const loadingRef = useRef(false)
 
   const currentVersion = useMemo(
     () => versions.find((v) => v.id === currentVersionId) ?? null,
@@ -120,6 +124,9 @@ export function PlayerShell() {
     }
   }, [audioEngine, isPlaying, queueIndex, queue.length, nextTrack, setPlaying, setCurrentTime, setDuration])
 
+  // Load the buffer whenever the audioUrl changes, then start playing if isPlaying is true.
+  // This is the ONLY place play() is called on a new URL — the isPlaying effect below
+  // is guarded by loadingRef to avoid racing with this one.
   useEffect(() => {
     if (!audioEngine) return
 
@@ -130,12 +137,15 @@ export function PlayerShell() {
     }
 
     let cancelled = false
+    loadingRef.current = true
 
     const load = async () => {
       try {
         await audioEngine.load(audioUrl)
 
         if (cancelled) return
+
+        loadingRef.current = false
 
         setCurrentTime(0)
 
@@ -154,6 +164,7 @@ export function PlayerShell() {
           }
         }
       } catch {
+        loadingRef.current = false
         setPlaying(false)
       }
     }
@@ -162,11 +173,16 @@ export function PlayerShell() {
 
     return () => {
       cancelled = true
+      loadingRef.current = false
     }
   }, [audioEngine, audioUrl, setCurrentTime, setDuration, setPlaying])
 
+  // Handle play/pause toggling AFTER the buffer is already loaded.
+  // Skipped while load() is in flight to avoid the race condition where
+  // isPlaying=true fires and play() is called on an empty buffer.
   useEffect(() => {
     if (!audioEngine || !audioUrl) return
+    if (loadingRef.current) return
 
     if (isPlaying) {
       audioEngine.play().catch(() => setPlaying(false))
@@ -208,8 +224,10 @@ export function PlayerShell() {
       <PlayerExpanded
         rate={rate}
         pitch={pitch}
+        eq={eq}
         setRate={setRate}
         setPitch={setPitch}
+        setEq={setEq}
         isVisible={isExpanded}
         trackTitle={trackTitle}
         coverUrl={coverUrl}

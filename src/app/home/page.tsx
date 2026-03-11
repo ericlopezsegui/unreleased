@@ -8,6 +8,7 @@ import { useHeaderContext } from '@/lib/header-context'
 import { QRCodeSVG } from 'qrcode.react'
 import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
+import { getAudioEngine, resumeAudioContext } from '@/lib/audio/engine-instance'
 
 interface RecentItem { id: string; title: string; type: 'album' | 'track'; updated_at: string; cover_path: string | null; album_id: string | null; album_title: string | null }
 interface Invite { id: string; token: string; role: string; expires_at: string; used_at: string | null }
@@ -42,21 +43,6 @@ function TimeAgo({ date }: { date: string }) {
   if (s < 86400) return <span>{Math.floor(s / 3600)}h</span>
   if (s < 604800) return <span>{Math.floor(s / 86400)}d</span>
   return <span>{new Date(date).toLocaleDateString('es', { day: 'numeric', month: 'short' })}</span>
-}
-
-function QRModal({ url, onClose }: { url: string; onClose: () => void }) {
-  return (
-    <div onClick={onClose} className="qr-overlay">
-      <div onClick={e => e.stopPropagation()} className="qr-box">
-        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-          <span className="label-xs">Abrir en móvil</span>
-          <button onClick={onClose} className="ghost-btn"><Ic n="close" s={13} /></button>
-        </div>
-        <QRCodeSVG value={url} size={160} fgColor="#0f0f0f" bgColor="#fff" level="M" />
-        <p style={{ fontSize: 11, color: '#aaa', textAlign: 'center', margin: 0 }}>Escanea con tu cámara</p>
-      </div>
-    </div>
-  )
 }
 
 function TeamModal({ artistId, artistName, currentUserId, onClose }: { artistId: string; artistName: string; currentUserId: string; onClose: () => void }) {
@@ -373,6 +359,7 @@ export default function HomePage() {
   const heroRef = useRef<HTMLElement>(null)
   const { setRightActions, setMiniInfo } = useHeaderContext()
   const openPlayer = usePlayerStore(s => s.openPlayer)
+  const setPlaying = usePlayerStore(s => s.setPlaying)
 
   const recent = useMemo<RecentItem[]>(() => {
     const items: RecentItem[] = [
@@ -388,60 +375,24 @@ export default function HomePage() {
     avatar_url: memberAvatarUrls[m.user_id] ?? null,
   })), [storeMembers, memberAvatarUrls])
 
-  const playTrack = (item: RecentItem) => {
+  const playTrack = async (item: RecentItem) => {
     if (playingId) return
 
     const activeVer = storeVersions.find(v => v.track_id === item.id && v.is_active)
     if (!activeVer) return
 
-    const audioUrl = storeAudioUrls[activeVer.id]
-    if (!audioUrl) return
+    setPlayingId(item.id)
 
-    openPlayer({
-      trackId: item.id,
-      trackTitle: item.title,
-      coverUrl: storeCoverUrls[item.id] ?? null,
-      versions: [
-        {
-          id: activeVer.id,
-          label: activeVer.label,
-          audioUrl,
-          bpm: activeVer.bpm,
-          key: activeVer.key,
-        },
-      ],
-      initialVersionId: activeVer.id,
-      stems: [
-        { id: `${item.id}-vocals`, label: 'Voces' },
-        { id: `${item.id}-drums`, label: 'Batería' },
-        { id: `${item.id}-bass`, label: 'Bajo' },
-        { id: `${item.id}-inst`, label: 'Instrumentos' },
-      ],
-    })
-  }
-
-  const playAlbum = (item: RecentItem) => {
-    if (playingId) return
-
-    const albumTracks = storeTracks
-      .filter(t => t.album_id === item.id)
-      .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
-
-    if (!albumTracks.length) return
-
-    const queue = []
-
-    for (const t of albumTracks) {
-      const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
-      if (!activeVer) continue
+    try {
+      await resumeAudioContext()
 
       const audioUrl = storeAudioUrls[activeVer.id]
-      if (!audioUrl) continue
+      if (!audioUrl) return
 
-      queue.push({
-        trackId: t.id,
-        trackTitle: t.title,
-        coverUrl: storeCoverUrls[t.id] ?? storeCoverUrls[item.id] ?? null,
+      openPlayer({
+        trackId: item.id,
+        trackTitle: item.title,
+        coverUrl: storeCoverUrls[item.id] ?? null,
         versions: [
           {
             id: activeVer.id,
@@ -451,30 +402,84 @@ export default function HomePage() {
             key: activeVer.key,
           },
         ],
+        initialVersionId: activeVer.id,
         stems: [
-          { id: `${t.id}-vocals`, label: 'Voces' },
-          { id: `${t.id}-drums`, label: 'Batería' },
-          { id: `${t.id}-bass`, label: 'Bajo' },
-          { id: `${t.id}-inst`, label: 'Instrumentos' },
+          { id: `${item.id}-vocals`, label: 'Voces' },
+          { id: `${item.id}-drums`, label: 'Batería' },
+          { id: `${item.id}-bass`, label: 'Bajo' },
+          { id: `${item.id}-inst`, label: 'Instrumentos' },
         ],
       })
+
+      setPlaying(true)
+    } finally {
+      setPlayingId(null)
     }
-
-    if (!queue.length) return
-
-    openPlayer({
-      trackId: queue[0].trackId ?? null,
-      trackTitle: queue[0].trackTitle,
-      coverUrl: queue[0].coverUrl ?? null,
-      versions: queue[0].versions,
-      initialVersionId: queue[0].versions[0]?.id ?? null,
-      stems: queue[0].stems ?? [],
-      queue,
-      queueIndex: 0,
-    })
   }
 
-  const signOut = async () => { await supabase.auth.signOut(); router.push('/login') }
+  const playAlbum = async (item: RecentItem) => {
+    if (playingId) return
+
+    setPlayingId(item.id)
+
+    try {
+      await resumeAudioContext()
+
+      const albumTracks = storeTracks
+        .filter(t => t.album_id === item.id)
+        .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+
+      if (!albumTracks.length) return
+
+      const queue = []
+
+      for (const t of albumTracks) {
+        const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
+        if (!activeVer) continue
+
+        const audioUrl = storeAudioUrls[activeVer.id]
+        if (!audioUrl) continue
+
+        queue.push({
+          trackId: t.id,
+          trackTitle: t.title,
+          coverUrl: storeCoverUrls[t.id] ?? storeCoverUrls[item.id] ?? null,
+          versions: [
+            {
+              id: activeVer.id,
+              label: activeVer.label,
+              audioUrl,
+              bpm: activeVer.bpm,
+              key: activeVer.key,
+            },
+          ],
+          stems: [
+            { id: `${t.id}-vocals`, label: 'Voces' },
+            { id: `${t.id}-drums`, label: 'Batería' },
+            { id: `${t.id}-bass`, label: 'Bajo' },
+            { id: `${t.id}-inst`, label: 'Instrumentos' },
+          ],
+        })
+      }
+
+      if (!queue.length) return
+
+      openPlayer({
+        trackId: queue[0].trackId ?? null,
+        trackTitle: queue[0].trackTitle,
+        coverUrl: queue[0].coverUrl ?? null,
+        versions: queue[0].versions,
+        initialVersionId: queue[0].versions[0]?.id ?? null,
+        stems: queue[0].stems ?? [],
+        queue,
+        queueIndex: 0,
+      })
+
+      setPlaying(true)
+    } finally {
+      setPlayingId(null)
+    }
+  }
 
   // Inject right-action buttons into the persistent header
   useEffect(() => {

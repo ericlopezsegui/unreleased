@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
+import { resumeAudioContext } from '@/lib/audio/engine-instance'
 
 function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: number; c?: string }) {
   return (
@@ -29,21 +30,45 @@ export default function TracksPage() {
   const router = useRouter()
   const supabase = createClient()
   const { setTitle, setRightActions } = useHeaderContext()
-  const loadQueue = usePlayerStore(s => s.loadQueue)
+  const openPlayer = usePlayerStore(s => s.openPlayer)
+  const setPlaying = usePlayerStore(s => s.setPlaying)
 
   const playTrack = async (trackId: string, title: string) => {
     if (playingId) return
+
     setPlayingId(trackId)
+
     try {
+      await resumeAudioContext()
+
       const activeVer = allVersions.find(v => v.track_id === trackId && v.is_active)
       if (!activeVer?.audio_path) return
+
       let audioUrl = audioUrls[activeVer.id]
+
       if (!audioUrl) {
         const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(activeVer.audio_path, 3600)
         if (!urlData?.signedUrl) return
         audioUrl = urlData.signedUrl
       }
-      loadQueue([{ trackId, trackTitle: title, coverUrl: coverUrls[trackId] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id }], 0)
+
+      openPlayer({
+        trackId,
+        trackTitle: title,
+        coverUrl: coverUrls[trackId] ?? null,
+        versions: [
+          {
+            id: activeVer.id,
+            label: activeVer.label,
+            audioUrl,
+            bpm: activeVer.bpm,
+            key: activeVer.key,
+          },
+        ],
+        initialVersionId: activeVer.id,
+      })
+
+      setPlaying(true)
     } finally {
       setPlayingId(null)
     }
