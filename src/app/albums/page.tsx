@@ -24,6 +24,8 @@ export default function AlbumsPage() {
   const versions = usePrefetchStore(s => s.versions)
   const tracks = usePrefetchStore(s => s.tracks)
   const audioUrls = usePrefetchStore(s => s.audioUrls)
+  const storeStems = usePrefetchStore(s => s.stems)
+  const stemAudioUrls = usePrefetchStore(s => s.stemAudioUrls)
 
   const [albumsView, setAlbumsView] = useState<'grid' | 'list'>('grid')
   const [playingId, setPlayingId] = useState<string | null>(null)
@@ -34,6 +36,17 @@ export default function AlbumsPage() {
 
   const openPlayer = usePlayerStore(s => s.openPlayer)
   const setPlaying = usePlayerStore(s => s.setPlaying)
+
+  const buildStems = (versionId: string) => {
+    return storeStems
+      .filter(s => s.version_id === versionId)
+      .map(s => ({
+        id: s.id,
+        label: s.label,
+        stemType: s.stem_type,
+        audioUrl: stemAudioUrls[s.id] ?? null,
+      }))
+  }
 
   const playAlbum = async (albumId: string) => {
     if (playingId) return
@@ -63,6 +76,12 @@ export default function AlbumsPage() {
           key?: string | null
         }>
         initialVersionId: string
+        stems: Array<{
+          id: string
+          label: string
+          stemType: 'vocals' | 'drums' | 'bass' | 'other'
+          audioUrl: string | null
+        }>
       }> = []
 
       for (const t of albumTracks) {
@@ -118,10 +137,9 @@ export default function AlbumsPage() {
           coverUrl: trackCoverUrl,
           versions: playableVersions,
           initialVersionId: activeVersion.id,
+          stems: buildStems(activeVersion.id),
         })
       }
-
-      if (!playerTracks.length) return
 
       if (!playerTracks.length) return
 
@@ -131,23 +149,13 @@ export default function AlbumsPage() {
         coverUrl: playerTracks[0].coverUrl,
         versions: playerTracks[0].versions,
         initialVersionId: playerTracks[0].initialVersionId,
-        stems: [
-          { id: `${playerTracks[0].trackId}-vocals`, label: 'Voces' },
-          { id: `${playerTracks[0].trackId}-drums`, label: 'Batería' },
-          { id: `${playerTracks[0].trackId}-bass`, label: 'Bajo' },
-          { id: `${playerTracks[0].trackId}-inst`, label: 'Instrumentos' },
-        ],
+        stems: playerTracks[0].stems,
         queue: playerTracks.map((track) => ({
           trackId: track.trackId,
           trackTitle: track.trackTitle,
           coverUrl: track.coverUrl,
           versions: track.versions,
-          stems: [
-            { id: `${track.trackId}-vocals`, label: 'Voces' },
-            { id: `${track.trackId}-drums`, label: 'Batería' },
-            { id: `${track.trackId}-bass`, label: 'Bajo' },
-            { id: `${track.trackId}-inst`, label: 'Instrumentos' },
-          ],
+          stems: track.stems,
         })),
         queueIndex: 0,
       })

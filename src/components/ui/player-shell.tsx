@@ -145,6 +145,20 @@ export function PlayerShell() {
 
         if (cancelled) return
 
+        const currentStems = usePlayerStore.getState().stems
+        if (currentStems?.length) {
+          await audioEngine.loadStems(
+            currentStems.filter(s => s.audioUrl).map(s => ({
+              id: s.id,
+              audioUrl: s.audioUrl!,
+            }))
+          )
+        } else {
+          audioEngine.clearStems()
+        }
+
+        if (cancelled) return
+
         loadingRef.current = false
 
         setCurrentTime(0)
@@ -206,21 +220,36 @@ export function PlayerShell() {
   if (!audioEngine || !isOpen) return null
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        bottom: 'calc(64px + env(safe-area-inset-bottom, 0px) + 10px)',
-        left: '50%',
-        transform: appear ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(130%)',
-        width: 'calc(100vw - 32px)',
-        maxWidth: 520,
-        zIndex: 199,
-        fontFamily: 'Outfit, sans-serif',
-        transition: 'transform .42s cubic-bezier(0.32,0.72,0,1)',
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
+    <>
+      <div
+        onClick={toggleExpanded}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 198,
+          background: 'rgba(0,0,0,0.55)',
+          backdropFilter: 'blur(14px)',
+          WebkitBackdropFilter: 'blur(14px)',
+          opacity: isExpanded ? 1 : 0,
+          pointerEvents: isExpanded ? 'auto' : 'none',
+          transition: 'opacity .36s cubic-bezier(.2,.9,.3,1)',
+        }}
+      />
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 'calc(64px + env(safe-area-inset-bottom, 0px) + 10px)',
+          left: '50%',
+          transform: appear ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(130%)',
+          width: 'calc(100vw - 32px)',
+          maxWidth: 520,
+          zIndex: 199,
+          fontFamily: 'Outfit, sans-serif',
+          transition: 'transform .42s cubic-bezier(0.32,0.72,0,1)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
       <PlayerExpanded
         rate={rate}
         pitch={pitch}
@@ -289,5 +318,6 @@ export function PlayerShell() {
         }}
       />
     </div>
+    </>
   )
 }

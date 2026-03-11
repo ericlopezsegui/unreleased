@@ -121,16 +121,11 @@ export function PlayerWave({
       const bh = Math.max(2, amp * (h - 6))
       const y = mid - bh / 2
 
-      ctx.fillStyle = x < playedX ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.16)'
-      ctx.fillRect(x, y, bw, bh)
+      ctx.fillStyle = x + bw <= playedX ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.13)'
+      ctx.beginPath()
+      ;(ctx as any).roundRect(x, y, bw, bh, bw / 2)
+      ctx.fill()
     }
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.58)'
-    ctx.lineWidth = 1.5
-    ctx.beginPath()
-    ctx.moveTo(playedX, 3)
-    ctx.lineTo(playedX, h - 3)
-    ctx.stroke()
   }, [peaks, progress, mini])
 
   return (

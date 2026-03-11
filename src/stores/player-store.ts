@@ -14,6 +14,7 @@ export type TrackVersion = {
 export type StemTrack = {
   id: string
   label: string
+  stemType?: 'vocals' | 'drums' | 'bass' | 'inst' | string
   audioUrl?: string | null
   enabled?: boolean
   volume?: number

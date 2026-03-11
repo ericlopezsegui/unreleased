@@ -23,15 +23,30 @@ export default function TracksPage() {
   const ready = usePrefetchStore(s => s.ready)
   const allVersions = usePrefetchStore(s => s.versions)
   const audioUrls = usePrefetchStore(s => s.audioUrls)
+  const storeStems = usePrefetchStore(s => s.stems)
+  const stemAudioUrls = usePrefetchStore(s => s.stemAudioUrls)
 
   const [view, setView] = useState<'grid' | 'list'>('list')
   const [filter, setFilter] = useState<'all' | 'singles' | 'albums'>('all')
   const [playingId, setPlayingId] = useState<string | null>(null)
+
   const router = useRouter()
   const supabase = createClient()
   const { setTitle, setRightActions } = useHeaderContext()
   const openPlayer = usePlayerStore(s => s.openPlayer)
   const setPlaying = usePlayerStore(s => s.setPlaying)
+
+  const buildStems = (versionId: string) => {
+    return storeStems
+      .filter(s => s.version_id === versionId)
+      .map(s => ({
+        id: s.id,
+        label: s.label,
+        stemType: s.stem_type,
+        audioUrl: stemAudioUrls[s.id] ?? null,
+      }))
+      .filter(stem => !!stem.audioUrl)
+  }
 
   const playTrack = async (trackId: string, title: string) => {
     if (playingId) return
@@ -66,6 +81,7 @@ export default function TracksPage() {
           },
         ],
         initialVersionId: activeVer.id,
+        stems: buildStems(activeVer.id),
       })
 
       setPlaying(true)
@@ -81,16 +97,21 @@ export default function TracksPage() {
         <Ic d="M12 5v14M5 12h14" s={12} /> Nuevo
       </button>
     )
-    return () => { setTitle(''); setRightActions(null) }
+    return () => {
+      setTitle('')
+      setRightActions(null)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artistId])
 
-  if (!ready) return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
-      <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
-      <style>{`@keyframes spin { to { transform:rotate(360deg) } }`}</style>
-    </div>
-  )
+  if (!ready) {
+    return (
+      <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
+        <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform:rotate(360deg) } }`}</style>
+      </div>
+    )
+  }
 
   const filtered = tracks.filter(t => {
     if (filter === 'singles') return !t.album_id
@@ -119,7 +140,6 @@ export default function TracksPage() {
         .vt-btn:hover { color:#999; background:rgba(0,0,0,0.02); }
         .vt-btn.active { color:#0f0f0f; background:rgba(0,0,0,0.04); border-color:rgba(0,0,0,0.05); }
 
-        /* Grid */
         .trk-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
         .trk-card { display:flex; flex-direction:column; background:rgba(255,255,255,0.65); backdrop-filter:blur(8px); border:1px solid rgba(0,0,0,0.04); border-radius:6px; overflow:hidden; cursor:pointer; font-family:inherit; text-align:left; transition:all .25s cubic-bezier(0.16,1,0.3,1); animation:scaleIn .5s cubic-bezier(0.16,1,0.3,1) both; }
         .trk-card:hover { transform:translateY(-2px); box-shadow:0 8px 32px rgba(0,0,0,0.06); border-color:rgba(0,0,0,0.07); background:rgba(255,255,255,0.9); }
@@ -133,14 +153,13 @@ export default function TracksPage() {
         .trk-title { font-size:13px; font-weight:600; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
         .trk-meta { font-size:11px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-        /* List */
         .trk-list { display:flex; flex-direction:column; gap:2px; }
         .trk-row { display:flex; align-items:center; gap:14px; padding:8px 12px; background:rgba(255,255,255,0.5); backdrop-filter:blur(8px); border:1px solid rgba(0,0,0,0.03); border-radius:6px; cursor:pointer; font-family:inherit; text-align:left; transition:all .2s cubic-bezier(0.16,1,0.3,1); animation:fadeUp .35s cubic-bezier(0.16,1,0.3,1) both; }
         .trk-row:hover { background:rgba(255,255,255,0.85); border-color:rgba(0,0,0,0.06); box-shadow:0 2px 12px rgba(0,0,0,0.03); }
         .trk-row:active { transform:scale(0.99); }
         .trk-row-cover { width:44px; height:44px; border-radius:5px; overflow:hidden; flex-shrink:0; background:#f3f3f3; }
         .trk-row-cover img { width:100%; height:100%; object-fit:cover; display:block; }
-        .trk-row-ph { width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f5f3f0,#ede9e5); color:#c8c0b8; }
+        .trk-row-ph { width:100%; height:100%; display:flex; align-items:center; justifyContent:center; background:linear-gradient(135deg,#f5f3f0,#ede9e5); color:#c8c0b8; }
         .trk-row-info { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
         .trk-row-title { font-size:13px; font-weight:500; color:#0f0f0f; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; letter-spacing:-0.01em; }
         .trk-row-meta { font-size:11px; color:#999; display:flex; align-items:center; gap:4px; overflow:hidden; white-space:nowrap; }
@@ -163,7 +182,6 @@ export default function TracksPage() {
           </div>
         ) : (
           <>
-            {/* Filter + count + view toggle */}
             <div className="view-header" style={{ marginBottom: 12 }}>
               <div className="filter-row">
                 <button className={`filter-btn${filter === 'all' ? ' active' : ''}`} onClick={() => setFilter('all')}>
@@ -204,7 +222,7 @@ export default function TracksPage() {
                         {t.album_id ? (t.albums as any)?.title ?? 'Álbum' : 'Single'}
                       </span>
                       <button
-                        onClick={e => { e.stopPropagation(); playTrack(t.id, t.title) }}
+                        onClick={e => { e.stopPropagation(); void playTrack(t.id, t.title) }}
                         style={{ position: 'absolute', bottom: 8, right: 8, width: 28, height: 28, borderRadius: '50%', background: 'rgba(15,15,15,0.72)', backdropFilter: 'blur(4px)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                       >
                         {playingId === t.id
@@ -238,7 +256,7 @@ export default function TracksPage() {
                       </div>
                     </div>
                     <button
-                      onClick={e => { e.stopPropagation(); playTrack(t.id, t.title) }}
+                      onClick={e => { e.stopPropagation(); void playTrack(t.id, t.title) }}
                       style={{ width: 30, height: 30, borderRadius: '50%', background: 'rgba(0,0,0,0.05)', border: '1px solid rgba(0,0,0,0.07)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
                     >
                       {playingId === t.id

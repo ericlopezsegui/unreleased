@@ -23,23 +23,24 @@ export default function AlbumPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  // Prefetch store
   const ready = usePrefetchStore(s => s.ready)
   const storeAlbums = usePrefetchStore(s => s.albums)
   const storeTracks = usePrefetchStore(s => s.tracks)
   const storeVersions = usePrefetchStore(s => s.versions)
   const storeCoverUrls = usePrefetchStore(s => s.coverUrls)
   const storeAudioUrls = usePrefetchStore(s => s.audioUrls)
+  const storeStems = usePrefetchStore(s => s.stems)
+  const stemAudioUrls = usePrefetchStore(s => s.stemAudioUrls)
   const updateAlbum = usePrefetchStore(s => s.updateAlbum)
   const setCoverUrlStore = usePrefetchStore(s => s.setCoverUrl)
 
-  // Derived from store
   const album = storeAlbums.find(a => a.id === id) ?? null
-  const tracks = storeTracks.filter(t => t.album_id === id).sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+  const tracks = storeTracks
+    .filter(t => t.album_id === id)
+    .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
   const coverUrl = storeCoverUrls[id] ?? null
 
   const [playingIdx, setPlayingIdx] = useState<number | null>(null)
-  // Edit state
   const [editing, setEditing] = useState(false)
   const [editVisible, setEditVisible] = useState(false)
   const [editTitle, setEditTitle] = useState('')
@@ -48,10 +49,23 @@ export default function AlbumPage() {
   const [editCoverPreview, setEditCoverPreview] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
   const coverInputRef = useRef<HTMLInputElement>(null)
   const { setTitle, setBackHref, setRightActions } = useHeaderContext()
   const openPlayer = usePlayerStore(s => s.openPlayer)
   const setPlaying = usePlayerStore(s => s.setPlaying)
+
+  const buildStemsForVersion = (versionId: string) => {
+    return storeStems
+      .filter(s => s.version_id === versionId)
+      .map(s => ({
+        id: s.id,
+        label: s.label,
+        stemType: s.stem_type,
+        audioUrl: stemAudioUrls[s.id] ?? null,
+      }))
+      .filter(stem => !!stem.audioUrl)
+  }
 
   const playFromTrack = async (startIndex: number) => {
     if (playingIdx !== null) return
@@ -61,7 +75,24 @@ export default function AlbumPage() {
     try {
       await resumeAudioContext()
 
-      const queue = []
+      const queue: Array<{
+        trackId: string
+        trackTitle: string
+        coverUrl: string | null
+        versions: Array<{
+          id: string
+          label: string
+          audioUrl: string
+          bpm?: number | null
+          key?: string | null
+        }>
+        stems: Array<{
+          id: string
+          label: string
+          stemType: 'vocals' | 'drums' | 'bass' | 'other'
+          audioUrl: string | null
+        }>
+      }> = []
 
       for (const t of tracks) {
         const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
@@ -78,10 +109,12 @@ export default function AlbumPage() {
           audioUrl = urlData.signedUrl
         }
 
+        const stems = buildStemsForVersion(activeVer.id)
+
         queue.push({
           trackId: t.id,
           trackTitle: t.title,
-          coverUrl: coverUrl,
+          coverUrl: storeCoverUrls[t.id] ?? coverUrl,
           versions: [
             {
               id: activeVer.id,
@@ -91,12 +124,7 @@ export default function AlbumPage() {
               key: activeVer.key,
             },
           ],
-          stems: [
-            { id: `${t.id}-vocals`, label: 'Voces' },
-            { id: `${t.id}-drums`, label: 'Batería' },
-            { id: `${t.id}-bass`, label: 'Bajo' },
-            { id: `${t.id}-inst`, label: 'Instrumentos' },
-          ],
+          stems,
         })
       }
 
@@ -111,14 +139,15 @@ export default function AlbumPage() {
       }
 
       const first = queue[qIdx]
+      if (!first) return
 
       openPlayer({
-        trackId: first.trackId ?? null,
+        trackId: first.trackId,
         trackTitle: first.trackTitle,
-        coverUrl: first.coverUrl ?? null,
+        coverUrl: first.coverUrl,
         versions: first.versions,
         initialVersionId: first.versions[0]?.id ?? null,
-        stems: first.stems ?? [],
+        stems: first.stems,
         queue,
         queueIndex: qIdx,
       })
@@ -138,12 +167,19 @@ export default function AlbumPage() {
         <button onClick={openEdit} className="hdr-sec-btn">
           <Ic d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" s={12} /> Editar
         </button>
-        <button onClick={() => router.push(`/tracks/new?album=${id}&artist=${usePrefetchStore.getState().artistId}`)} className="hdr-new-btn">
+        <button
+          onClick={() => router.push(`/tracks/new?album=${id}&artist=${usePrefetchStore.getState().artistId}`)}
+          className="hdr-new-btn"
+        >
           <Ic d="M12 5v14M5 12h14" s={12} /> Track
         </button>
       </div>
     )
-    return () => { setTitle(''); setBackHref(''); setRightActions(null) }
+    return () => {
+      setTitle('')
+      setBackHref('')
+      setRightActions(null)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [album, ready])
 
@@ -170,34 +206,62 @@ export default function AlbumPage() {
   }
 
   const saveAlbum = async () => {
-    if (!editTitle.trim()) { setSaveError('El título es obligatorio'); return }
-    setSaving(true); setSaveError(null)
+    if (!editTitle.trim()) {
+      setSaveError('El título es obligatorio')
+      return
+    }
+
+    setSaving(true)
+    setSaveError(null)
+
     let newCoverPath = album?.cover_path ?? null
+
     if (editCoverFile) {
       const ext = editCoverFile.name.split('.').pop()
       const path = `artist/${usePrefetchStore.getState().artistId}/album-cover-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage.from('covers').upload(path, editCoverFile, { upsert: true })
-      if (upErr) { setSaveError(`Error al subir imagen: ${upErr.message}`); setSaving(false); return }
+      if (upErr) {
+        setSaveError(`Error al subir imagen: ${upErr.message}`)
+        setSaving(false)
+        return
+      }
       newCoverPath = path
     }
+
     const { error: dbErr } = await supabase.from('albums').update({
       title: editTitle.trim(),
       description: editDescription.trim() || null,
       cover_path: newCoverPath,
     }).eq('id', id)
-    if (dbErr) { setSaveError(dbErr.message); setSaving(false); return }
-    updateAlbum(id, { title: editTitle.trim(), description: editDescription.trim() || null, cover_path: newCoverPath })
-    if (editCoverFile && editCoverPreview) setCoverUrlStore(id, editCoverPreview)
+
+    if (dbErr) {
+      setSaveError(dbErr.message)
+      setSaving(false)
+      return
+    }
+
+    updateAlbum(id, {
+      title: editTitle.trim(),
+      description: editDescription.trim() || null,
+      cover_path: newCoverPath,
+    })
+
+    if (editCoverFile && editCoverPreview) {
+      setCoverUrlStore(id, editCoverPreview)
+    }
+
     setSaving(false)
     closeEdit()
   }
 
-  if (!ready || !album) return (
-    <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
-      <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
-      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
-    </div>
-  )
+  if (!ready || !album) {
+    return (
+      <div style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fafafa' }}>
+        <div style={{ width: 16, height: 16, border: '1.5px solid #eee', borderTopColor: '#0f0f0f', borderRadius: '50%', animation: 'spin .7s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100dvh', background: '#fafafa', fontFamily: 'Outfit, sans-serif', paddingTop: 56 }}>
@@ -205,25 +269,21 @@ export default function AlbumPage() {
         @keyframes spin { to { transform: rotate(360deg) } }
         @keyframes fadeUp { from { opacity:0;transform:translateY(12px) } to { opacity:1;transform:none } }
 
-        /* Hero */
         .alb-hero { position:relative; width:100%; height:min(320px,82vw); overflow:hidden; background:#0f0f0f; }
         .alb-hero-blur { position:absolute; inset:-28px; background-size:cover; background-position:center; filter:blur(44px) saturate(1.7); opacity:0.75; transform:scale(1.15); }
         .alb-hero-cover { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:min(220px,58%); aspect-ratio:1; border-radius:16px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,0.3), 0 20px 64px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.14); }
         .alb-hero-cover img { width:100%; height:100%; object-fit:cover; display:block; }
         .alb-hero-placeholder { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:min(220px,58%); aspect-ratio:1; border-radius:16px; background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; }
 
-        /* Track rows */
         .track-row { display:flex; align-items:center; gap:12px; padding:12px 14px; background:#fff; border:1px solid rgba(0,0,0,0.04); border-radius:10px; cursor:pointer; width:100%; text-align:left; font-family:inherit; transition:box-shadow .18s, border-color .18s; animation:fadeUp .38s cubic-bezier(0.16,1,0.3,1) both; box-shadow:0 1px 3px rgba(0,0,0,0.03); }
         .track-row:hover { box-shadow:0 4px 16px rgba(0,0,0,0.08); border-color:rgba(0,0,0,0.08); }
         .track-row:active { transform:scale(0.99); }
 
-        /* Play chip */
         .play-chip { display:inline-flex; align-items:center; gap:8px; background:#0f0f0f; color:#fff; border:none; cursor:pointer; padding:10px 20px; border-radius:100px; font-family:inherit; font-size:13px; font-weight:500; letter-spacing:-0.01em; transition:transform .13s, box-shadow .18s; box-shadow:0 2px 20px rgba(15,15,15,0.2); }
         .play-chip:hover { box-shadow:0 4px 28px rgba(15,15,15,0.3); }
         .play-chip:active { transform:scale(0.95); }
         .play-chip:disabled { background:#ccc; box-shadow:none; cursor:not-allowed; }
 
-        /* Overlay */
         .edit-overlay { position:fixed; inset:0; z-index:100; display:flex; align-items:flex-end; justify-content:center; transition:background .32s ease, backdrop-filter .32s ease; }
         .edit-panel { width:100%; max-width:560px; background:#fafafa; border-top:1px solid #eee; padding:28px 24px 52px; max-height:90dvh; overflow-y:auto; font-family:Outfit,sans-serif; transition:transform .34s cubic-bezier(0.32,0.72,0,1), opacity .28s ease; border-radius:20px 20px 0 0; position:relative; }
         .edit-label { display:block; font-size:10px; font-weight:600; letter-spacing:0.2em; text-transform:uppercase; color:#999; margin-bottom:8px; }
@@ -235,7 +295,6 @@ export default function AlbumPage() {
         .drag-handle { width:36px; height:4px; border-radius:2px; background:rgba(0,0,0,0.1); margin:0 auto 20px; }
       `}</style>
 
-      {/* ── HERO ── */}
       <div className="alb-hero">
         {coverUrl && <div className="alb-hero-blur" style={{ backgroundImage: `url(${coverUrl})` }} />}
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.65) 100%)' }} />
@@ -245,24 +304,16 @@ export default function AlbumPage() {
         }
       </div>
 
-      {/* ── BODY ── */}
       <div style={{ maxWidth: 560, margin: '0 auto', padding: '24px 20px 140px' }}>
-
-        {/* Title + meta */}
         <div style={{ marginBottom: 20, animation: 'fadeUp .38s ease both' }}>
-          <h1 style={{ fontSize: 28, fontWeight: 200, color: '#0f0f0f', margin: '0 0 6px', letterSpacing: '-0.03em', lineHeight: 1.1 }}>{album?.title}</h1>
-          {album?.description && <p style={{ fontSize: 13, color: '#888', lineHeight: 1.65, margin: '0 0 8px', fontWeight: 300 }}>{album.description}</p>}
+          <h1 style={{ fontSize: 28, fontWeight: 200, color: '#0f0f0f', margin: '0 0 6px', letterSpacing: '-0.03em', lineHeight: 1.1 }}>{album.title}</h1>
+          {album.description && <p style={{ fontSize: 13, color: '#888', lineHeight: 1.65, margin: '0 0 8px', fontWeight: 300 }}>{album.description}</p>}
           <span style={{ fontSize: 11, color: '#bbb', fontWeight: 400 }}>{tracks.length} {tracks.length === 1 ? 'track' : 'tracks'}</span>
         </div>
 
-        {/* Play button */}
         {tracks.length > 0 && (
           <div style={{ marginBottom: 28, animation: 'fadeUp .38s .04s ease both' }}>
-            <button
-              className="play-chip"
-              onClick={() => playFromTrack(0)}
-              disabled={playingIdx !== null}
-            >
+            <button className="play-chip" onClick={() => void playFromTrack(0)} disabled={playingIdx !== null}>
               {playingIdx !== null
                 ? <span style={{ width: 10, height: 10, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
                 : <svg width="11" height="11" viewBox="0 0 24 24" fill="#fff" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
@@ -271,8 +322,8 @@ export default function AlbumPage() {
           </div>
         )}
 
-        {/* Tracks */}
         <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: '#bbb', margin: '0 0 12px' }}>Tracks</p>
+
         {tracks.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '48px 0', textAlign: 'center', animation: 'fadeUp .38s ease both' }}>
             <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
@@ -286,9 +337,16 @@ export default function AlbumPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {tracks.map((track, i) => (
-              <div key={track.id} onClick={() => router.push(`/tracks/${track.id}`)} role="button" tabIndex={0} className="track-row" style={{ animationDelay: `${i * 0.04}s` }}>
+              <div
+                key={track.id}
+                onClick={() => router.push(`/tracks/${track.id}`)}
+                role="button"
+                tabIndex={0}
+                className="track-row"
+                style={{ animationDelay: `${i * 0.04}s` }}
+              >
                 <button
-                  onClick={e => { e.stopPropagation(); playFromTrack(i) }}
+                  onClick={e => { e.stopPropagation(); void playFromTrack(i) }}
                   style={{ width: 28, height: 28, borderRadius: '50%', background: playingIdx === i ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#999', transition: 'all .15s' }}
                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.09)'; e.currentTarget.style.color = '#444' }}
                   onMouseLeave={e => { e.currentTarget.style.background = playingIdx === i ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = '#999' }}
@@ -297,10 +355,17 @@ export default function AlbumPage() {
                     ? <span style={{ width: 9, height: 9, border: '1.5px solid #ccc', borderTopColor: '#666', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />
                     : <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M5 3l14 9-14 9V3z"/></svg>}
                 </button>
-                <span style={{ width: 22, fontSize: 12, color: '#ccc', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{track.position ?? i + 1}</span>
+
+                <span style={{ width: 22, fontSize: 12, color: '#ccc', textAlign: 'right', flexShrink: 0, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {track.position ?? i + 1}
+                </span>
+
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: 14, fontWeight: 500, color: '#0f0f0f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{track.title}</p>
+                  <p style={{ fontSize: 14, fontWeight: 500, color: '#0f0f0f', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>
+                    {track.title}
+                  </p>
                 </div>
+
                 <Ic d="M9 18l6-6-6-6" s={14} c="#ccc" />
               </div>
             ))}
@@ -308,7 +373,6 @@ export default function AlbumPage() {
         )}
       </div>
 
-      {/* Edit panel */}
       {editing && (
         <div onClick={closeEdit} className="edit-overlay" style={{ background: editVisible ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0)', backdropFilter: editVisible ? 'blur(8px)' : 'blur(0px)' }}>
           <div onClick={e => e.stopPropagation()} className="edit-panel" style={{ transform: editVisible ? 'translateY(0)' : 'translateY(100%)', opacity: editVisible ? 1 : 0 }}>
@@ -320,7 +384,6 @@ export default function AlbumPage() {
               </button>
             </div>
 
-            {/* Cover */}
             <div style={{ marginBottom: 20 }}>
               <label className="edit-label">Portada</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -334,7 +397,9 @@ export default function AlbumPage() {
                     {editCoverPreview ? 'Cambiar imagen' : 'Añadir imagen'}
                   </button>
                   {editCoverFile && (
-                    <button type="button" onClick={() => { setEditCoverFile(null); setEditCoverPreview(coverUrl) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 11, fontFamily: 'inherit', textAlign: 'left', padding: 0 }}>Descartar cambio</button>
+                    <button type="button" onClick={() => { setEditCoverFile(null); setEditCoverPreview(coverUrl) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 11, fontFamily: 'inherit', textAlign: 'left', padding: 0 }}>
+                      Descartar cambio
+                    </button>
                   )}
                   <p style={{ fontSize: 11, color: '#bbb', margin: 0 }}>JPG, PNG, WebP</p>
                 </div>
@@ -342,13 +407,11 @@ export default function AlbumPage() {
               </div>
             </div>
 
-            {/* Title */}
             <div style={{ marginBottom: 16 }}>
               <label className="edit-label">Título *</label>
               <input className="edit-input" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Nombre del álbum" />
             </div>
 
-            {/* Description */}
             <div style={{ marginBottom: 24 }}>
               <label className="edit-label">Descripción</label>
               <textarea className="edit-input" value={editDescription} onChange={e => setEditDescription(e.target.value)} placeholder="Descripción del álbum..." style={{ minHeight: 80, resize: 'vertical' }} />
@@ -356,7 +419,9 @@ export default function AlbumPage() {
 
             {saveError && <p style={{ fontSize: 12, color: '#e53e3e', marginBottom: 12 }}>{saveError}</p>}
             <button onClick={saveAlbum} disabled={saving} className="save-btn">
-              {saving ? <><span style={{ width: 13, height: 13, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />Guardando...</> : 'Guardar cambios'}
+              {saving
+                ? <><span style={{ width: 13, height: 13, border: '1.5px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />Guardando...</>
+                : 'Guardar cambios'}
             </button>
           </div>
         </div>

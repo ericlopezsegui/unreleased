@@ -54,7 +54,7 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
     setAnalyzing(true)
     const result = await analyzeAudio(f)
     if (result.bpm) setBpm(String(result.bpm))
-    if (result.key) setKey(result.key)
+    if (result.key) setKey(result.scale ? `${result.key} ${result.scale}` : result.key)
     setAnalyzing(false)
   }
 
@@ -66,7 +66,7 @@ function NewTrackPageContent({ albumId, artistId }: { albumId: string | null; ar
     setAnalyzing(true)
     const result = await analyzeAudio(f)
     if (result.bpm) setBpm(String(result.bpm))
-    if (result.key) setKey(result.key)
+    if (result.key) setKey(result.scale ? `${result.key} ${result.scale}` : result.key)
     setAnalyzing(false)
   }
 
