@@ -1,114 +1,223 @@
 import { create } from 'zustand'
 
-export interface PlayerVersion {
+export type PlayerTab = 'versions' | 'controls' | 'eq' | 'stems'
+
+export type TrackVersion = {
   id: string
   label: string
   audioUrl: string
-  bpm: number | null
-  key: string | null
+  bpm?: number | null
+  key?: string | null
+  createdAt?: string | null
 }
 
-export interface QueueItem {
-  trackId: string
+export type StemTrack = {
+  id: string
+  label: string
+  audioUrl?: string | null
+  enabled?: boolean
+  volume?: number
+}
+
+type OpenPayload = {
+  trackId?: string | null
   trackTitle: string
-  coverUrl: string | null
-  versions: PlayerVersion[]
-  initialVersionId: string
+  coverUrl?: string | null
+  versions: TrackVersion[]
+  initialVersionId?: string | null
+  stems?: StemTrack[]
+  queue?: Array<{
+    trackId?: string | null
+    trackTitle: string
+    coverUrl?: string | null
+    versions: TrackVersion[]
+    stems?: StemTrack[]
+  }>
+  queueIndex?: number
 }
 
-interface PlayerState {
-  trackId: string | null
-  trackTitle: string | null
-  coverUrl: string | null
-  versions: PlayerVersion[]
-  currentVersionId: string | null
+type PlayerState = {
   isOpen: boolean
   isExpanded: boolean
   isPlaying: boolean
-  queue: QueueItem[]
+
+  trackId: string | null
+  trackTitle: string | null
+  coverUrl: string | null
+
+  versions: TrackVersion[]
+  currentVersionId: string | null
+
+  stems: StemTrack[]
+
+  queue: Array<{
+    trackId?: string | null
+    trackTitle: string
+    coverUrl?: string | null
+    versions: TrackVersion[]
+    stems?: StemTrack[]
+  }>
   queueIndex: number
 
-  loadTrack: (data: {
-    trackId: string
-    trackTitle: string
-    coverUrl: string | null
-    versions: PlayerVersion[]
-    initialVersionId: string
-  }) => void
-  loadQueue: (items: QueueItem[], startIndex: number) => void
+  currentTime: number
+  duration: number
+
+  activeTab: PlayerTab
+
+  openPlayer: (payload: OpenPayload) => void
+  closePlayer: () => void
+  toggleExpanded: () => void
+  setExpanded: (value: boolean) => void
+  setPlaying: (value: boolean) => void
+
+  setCurrentVersion: (versionId: string) => void
+  setCurrentTime: (time: number) => void
+  setDuration: (duration: number) => void
+  setActiveTab: (tab: PlayerTab) => void
+
   nextTrack: () => void
   prevTrack: () => void
-  setCurrentVersion: (id: string) => void
-  close: () => void
-  toggleExpanded: () => void
-  setPlaying: (v: boolean) => void
+}
+
+function getInitialVersionId(versions: TrackVersion[], initialVersionId?: string | null) {
+  if (initialVersionId && versions.some(v => v.id === initialVersionId)) return initialVersionId
+  return versions[0]?.id ?? null
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
-  trackId: null,
-  trackTitle: null,
-  coverUrl: null,
-  versions: [],
-  currentVersionId: null,
   isOpen: false,
   isExpanded: false,
   isPlaying: false,
+
+  trackId: null,
+  trackTitle: null,
+  coverUrl: null,
+
+  versions: [],
+  currentVersionId: null,
+
+  stems: [],
+
   queue: [],
   queueIndex: 0,
 
-  loadTrack: (data) =>
-    set({
-      trackId: data.trackId,
-      trackTitle: data.trackTitle,
-      coverUrl: data.coverUrl,
-      versions: data.versions,
-      currentVersionId: data.initialVersionId,
-      isOpen: true,
-      isExpanded: false,
-      isPlaying: true,
-      queue: [{ trackId: data.trackId, trackTitle: data.trackTitle, coverUrl: data.coverUrl, versions: data.versions, initialVersionId: data.initialVersionId }],
-      queueIndex: 0,
-    }),
+  currentTime: 0,
+  duration: 0,
 
-  loadQueue: (items, startIndex) => {
-    if (items.length === 0) return
-    const idx = Math.max(0, Math.min(startIndex, items.length - 1))
-    const item = items[idx]
+  activeTab: 'versions',
+
+  openPlayer: (payload) => {
+    const queue = payload.queue ?? [
+      {
+        trackId: payload.trackId ?? null,
+        trackTitle: payload.trackTitle,
+        coverUrl: payload.coverUrl ?? null,
+        versions: payload.versions,
+        stems: payload.stems ?? [],
+      },
+    ]
+
+    const queueIndex = payload.queueIndex ?? 0
+    const currentItem = queue[queueIndex]
+
     set({
-      trackId: item.trackId,
-      trackTitle: item.trackTitle,
-      coverUrl: item.coverUrl,
-      versions: item.versions,
-      currentVersionId: item.initialVersionId,
       isOpen: true,
       isExpanded: false,
       isPlaying: true,
-      queue: items,
-      queueIndex: idx,
+
+      trackId: currentItem?.trackId ?? payload.trackId ?? null,
+      trackTitle: currentItem?.trackTitle ?? payload.trackTitle,
+      coverUrl: currentItem?.coverUrl ?? payload.coverUrl ?? null,
+
+      versions: currentItem?.versions ?? payload.versions,
+      currentVersionId: getInitialVersionId(
+        currentItem?.versions ?? payload.versions,
+        payload.initialVersionId,
+      ),
+
+      stems: currentItem?.stems ?? payload.stems ?? [],
+
+      queue,
+      queueIndex,
+
+      currentTime: 0,
+      duration: 0,
+      activeTab: 'versions',
     })
   },
 
+  closePlayer: () =>
+    set({
+      isOpen: false,
+      isExpanded: false,
+      isPlaying: false,
+      currentTime: 0,
+      duration: 0,
+      activeTab: 'versions',
+    }),
+
+  toggleExpanded: () => set((state) => ({ isExpanded: !state.isExpanded })),
+  setExpanded: (value) => set({ isExpanded: value }),
+  setPlaying: (value) => set({ isPlaying: value }),
+
+  setCurrentVersion: (versionId) =>
+    set((state) => {
+      if (!state.versions.some(v => v.id === versionId)) return state
+      return {
+        currentVersionId: versionId,
+        currentTime: 0,
+        duration: 0,
+        isPlaying: false,
+      }
+    }),
+
+  setCurrentTime: (time) => set({ currentTime: time }),
+  setDuration: (duration) => set({ duration }),
+  setActiveTab: (tab) => set({ activeTab: tab }),
+
   nextTrack: () => {
-    const { queue, queueIndex } = get()
-    const nextIdx = queueIndex + 1
-    if (nextIdx >= queue.length) return
-    const item = queue[nextIdx]
-    set({ trackId: item.trackId, trackTitle: item.trackTitle, coverUrl: item.coverUrl, versions: item.versions, currentVersionId: item.initialVersionId, isPlaying: true, queueIndex: nextIdx })
+    const state = get()
+    if (state.queueIndex >= state.queue.length - 1) return
+
+    const nextIndex = state.queueIndex + 1
+    const item = state.queue[nextIndex]
+    if (!item) return
+
+    set({
+      queueIndex: nextIndex,
+      trackId: item.trackId ?? null,
+      trackTitle: item.trackTitle,
+      coverUrl: item.coverUrl ?? null,
+      versions: item.versions,
+      currentVersionId: getInitialVersionId(item.versions),
+      stems: item.stems ?? [],
+      currentTime: 0,
+      duration: 0,
+      isPlaying: false,
+      activeTab: 'versions',
+    })
   },
 
   prevTrack: () => {
-    const { queue, queueIndex } = get()
-    const prevIdx = queueIndex - 1
-    if (prevIdx < 0) return
-    const item = queue[prevIdx]
-    set({ trackId: item.trackId, trackTitle: item.trackTitle, coverUrl: item.coverUrl, versions: item.versions, currentVersionId: item.initialVersionId, isPlaying: true, queueIndex: prevIdx })
+    const state = get()
+    if (state.queueIndex <= 0) return
+
+    const prevIndex = state.queueIndex - 1
+    const item = state.queue[prevIndex]
+    if (!item) return
+
+    set({
+      queueIndex: prevIndex,
+      trackId: item.trackId ?? null,
+      trackTitle: item.trackTitle,
+      coverUrl: item.coverUrl ?? null,
+      versions: item.versions,
+      currentVersionId: getInitialVersionId(item.versions),
+      stems: item.stems ?? [],
+      currentTime: 0,
+      duration: 0,
+      isPlaying: false,
+      activeTab: 'versions',
+    })
   },
-
-  setCurrentVersion: (id) => set({ currentVersionId: id, isPlaying: true }),
-
-  close: () => set({ isOpen: false, isPlaying: false, queue: [], queueIndex: 0 }),
-
-  toggleExpanded: () => set((s) => ({ isExpanded: !s.isExpanded })),
-
-  setPlaying: (v) => set({ isPlaying: v }),
 }))

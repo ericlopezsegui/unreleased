@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { analyzeAudio } from '@/lib/analyze-audio'
-import { usePlayerStore, type PlayerVersion } from '@/stores/player-store'
+import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
 
 type Version = { id: string; track_id?: string; label: string; notes: string | null; audio_path: string | null; bpm: number | null; key: string | null; is_active: boolean; created_at: string }
@@ -94,23 +94,39 @@ export default function TrackPage() {
     versions.forEach(v => updateVersionStore(v.id, { is_active: v.id === versionId }))
   }
 
-  const loadTrack = usePlayerStore(s => s.loadTrack)
+  const openPlayer = usePlayerStore(s => s.openPlayer)
   const playerCurrentId = usePlayerStore(s => s.currentVersionId)
 
   const playVersion = (startVersionId?: string) => {
     if (!track || versions.length === 0) return
-    const pVersions: PlayerVersion[] = versions
+
+    const pVersions = versions
       .filter(v => audioUrls[v.id])
-      .map(v => ({ id: v.id, label: v.label, audioUrl: audioUrls[v.id], bpm: v.bpm, key: v.key }))
+      .map(v => ({
+        id: v.id,
+        label: v.label,
+        audioUrl: audioUrls[v.id],
+        bpm: v.bpm,
+        key: v.key,
+      }))
+
     if (pVersions.length === 0) return
+
     const active = versions.find(v => v.is_active) ?? versions[0]
     const initial = startVersionId && audioUrls[startVersionId] ? startVersionId : active.id
-    loadTrack({
+
+    openPlayer({
       trackId: track.id,
       trackTitle: track.title,
       coverUrl: coverUrl,
       versions: pVersions,
       initialVersionId: initial,
+      stems: [
+        { id: `${track.id}-vocals`, label: 'Voces' },
+        { id: `${track.id}-drums`, label: 'Batería' },
+        { id: `${track.id}-bass`, label: 'Bajo' },
+        { id: `${track.id}-inst`, label: 'Instrumentos' },
+      ],
     })
   }
 

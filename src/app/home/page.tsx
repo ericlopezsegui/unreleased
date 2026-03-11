@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
 import { QRCodeSVG } from 'qrcode.react'
-import { usePlayerStore, type QueueItem } from '@/stores/player-store'
+import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
 
 interface RecentItem { id: string; title: string; type: 'album' | 'track'; updated_at: string; cover_path: string | null; album_id: string | null; album_title: string | null }
@@ -372,7 +372,7 @@ export default function HomePage() {
   const supabase = createClient()
   const heroRef = useRef<HTMLElement>(null)
   const { setRightActions, setMiniInfo } = useHeaderContext()
-  const loadQueue = usePlayerStore(s => s.loadQueue)
+  const openPlayer = usePlayerStore(s => s.openPlayer)
 
   const recent = useMemo<RecentItem[]>(() => {
     const items: RecentItem[] = [
@@ -390,28 +390,88 @@ export default function HomePage() {
 
   const playTrack = (item: RecentItem) => {
     if (playingId) return
+
     const activeVer = storeVersions.find(v => v.track_id === item.id && v.is_active)
     if (!activeVer) return
-    let audioUrl = storeAudioUrls[activeVer.id]
+
+    const audioUrl = storeAudioUrls[activeVer.id]
     if (!audioUrl) return
-    loadQueue([{ trackId: item.id, trackTitle: item.title, coverUrl: storeCoverUrls[item.id] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id }], 0)
+
+    openPlayer({
+      trackId: item.id,
+      trackTitle: item.title,
+      coverUrl: storeCoverUrls[item.id] ?? null,
+      versions: [
+        {
+          id: activeVer.id,
+          label: activeVer.label,
+          audioUrl,
+          bpm: activeVer.bpm,
+          key: activeVer.key,
+        },
+      ],
+      initialVersionId: activeVer.id,
+      stems: [
+        { id: `${item.id}-vocals`, label: 'Voces' },
+        { id: `${item.id}-drums`, label: 'Batería' },
+        { id: `${item.id}-bass`, label: 'Bajo' },
+        { id: `${item.id}-inst`, label: 'Instrumentos' },
+      ],
+    })
   }
 
   const playAlbum = (item: RecentItem) => {
     if (playingId) return
+
     const albumTracks = storeTracks
       .filter(t => t.album_id === item.id)
       .sort((a, b) => (a.position ?? 999) - (b.position ?? 999))
+
     if (!albumTracks.length) return
-    const queueItems: QueueItem[] = []
+
+    const queue = []
+
     for (const t of albumTracks) {
       const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
       if (!activeVer) continue
+
       const audioUrl = storeAudioUrls[activeVer.id]
       if (!audioUrl) continue
-      queueItems.push({ trackId: t.id, trackTitle: t.title, coverUrl: storeCoverUrls[t.id] ?? storeCoverUrls[item.id] ?? null, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id })
+
+      queue.push({
+        trackId: t.id,
+        trackTitle: t.title,
+        coverUrl: storeCoverUrls[t.id] ?? storeCoverUrls[item.id] ?? null,
+        versions: [
+          {
+            id: activeVer.id,
+            label: activeVer.label,
+            audioUrl,
+            bpm: activeVer.bpm,
+            key: activeVer.key,
+          },
+        ],
+        stems: [
+          { id: `${t.id}-vocals`, label: 'Voces' },
+          { id: `${t.id}-drums`, label: 'Batería' },
+          { id: `${t.id}-bass`, label: 'Bajo' },
+          { id: `${t.id}-inst`, label: 'Instrumentos' },
+        ],
+      })
     }
-    if (queueItems.length) loadQueue(queueItems, 0)
+
+    if (!queue.length) return
+
+    openPlayer({
+      trackId: queue[0].trackId ?? null,
+      trackTitle: queue[0].trackTitle,
+      coverUrl: queue[0].coverUrl ?? null,
+      versions: queue[0].versions,
+      initialVersionId: queue[0].versions[0]?.id ?? null,
+      stems: queue[0].stems ?? [],
+      queue,
+      queueIndex: 0,
+    })
   }
 
   const signOut = async () => { await supabase.auth.signOut(); router.push('/login') }

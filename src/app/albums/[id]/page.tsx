@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useHeaderContext } from '@/lib/header-context'
-import { usePlayerStore, type QueueItem } from '@/stores/player-store'
+import { usePlayerStore } from '@/stores/player-store'
 import { usePrefetchStore } from '@/stores/prefetch-store'
 
 function Ic({ d, s = 16, c = 'currentColor' }: { d: string | string[]; s?: number; c?: string }) {
@@ -49,32 +49,75 @@ export default function AlbumPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
   const { setTitle, setBackHref, setRightActions } = useHeaderContext()
-  const loadQueue = usePlayerStore(s => s.loadQueue)
+  const openPlayer = usePlayerStore(s => s.openPlayer)
 
   const playFromTrack = async (startIndex: number) => {
     if (playingIdx !== null) return
+
     setPlayingIdx(startIndex)
+
     try {
-      const items: QueueItem[] = []
+      const queue = []
+
       for (const t of tracks) {
         const activeVer = storeVersions.find(v => v.track_id === t.id && v.is_active)
         if (!activeVer?.audio_path) continue
+
         let audioUrl = storeAudioUrls[activeVer.id]
+
         if (!audioUrl) {
-          const { data: urlData } = await supabase.storage.from('audio').createSignedUrl(activeVer.audio_path, 3600)
+          const { data: urlData } = await supabase.storage
+            .from('audio')
+            .createSignedUrl(activeVer.audio_path, 3600)
+
           if (!urlData?.signedUrl) continue
           audioUrl = urlData.signedUrl
         }
-        items.push({ trackId: t.id, trackTitle: t.title, coverUrl: coverUrl, versions: [{ id: activeVer.id, label: activeVer.label, audioUrl, bpm: activeVer.bpm, key: activeVer.key }], initialVersionId: activeVer.id })
+
+        queue.push({
+          trackId: t.id,
+          trackTitle: t.title,
+          coverUrl: coverUrl,
+          versions: [
+            {
+              id: activeVer.id,
+              label: activeVer.label,
+              audioUrl,
+              bpm: activeVer.bpm,
+              key: activeVer.key,
+            },
+          ],
+          stems: [
+            { id: `${t.id}-vocals`, label: 'Voces' },
+            { id: `${t.id}-drums`, label: 'Batería' },
+            { id: `${t.id}-bass`, label: 'Bajo' },
+            { id: `${t.id}-inst`, label: 'Instrumentos' },
+          ],
+        })
       }
-      if (!items.length) return
+
+      if (!queue.length) return
+
       let qIdx = 0
       const targetTrackId = tracks[startIndex]?.id
+
       if (targetTrackId) {
-        const idx = items.findIndex(item => item.trackId === targetTrackId)
+        const idx = queue.findIndex(item => item.trackId === targetTrackId)
         if (idx >= 0) qIdx = idx
       }
-      loadQueue(items, qIdx)
+
+      const first = queue[qIdx]
+
+      openPlayer({
+        trackId: first.trackId ?? null,
+        trackTitle: first.trackTitle,
+        coverUrl: first.coverUrl ?? null,
+        versions: first.versions,
+        initialVersionId: first.versions[0]?.id ?? null,
+        stems: first.stems ?? [],
+        queue,
+        queueIndex: qIdx,
+      })
     } finally {
       setPlayingIdx(null)
     }
